@@ -1,1 +1,11 @@
-{}
+{
+  "dwd_order_detail": {
+    "exists": true,
+    "owner": "mock_owner",
+    "columns": [
+      {"name": "user_id", "data_type": "bigint"},
+      {"name": "payment_amount", "data_type": "string"},
+      {"name": "date", "data_type": "string", "is_partition": true}
+    ]
+  }
+}

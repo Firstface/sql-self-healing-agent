@@ -3,6 +3,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from sql_self_healing_agent.core.enums import AttemptStatus, SessionStatus
+from sql_self_healing_agent.diagnostics.diagnosis_models import DiagnosisHistoryItem
 
 
 class RepairSession(BaseModel):
@@ -22,6 +23,7 @@ class RepairSession(BaseModel):
 
     upstream_events: list["UpstreamTaskEventRecord"] = Field(default_factory=list)
     attempt_ids: list[str] = Field(default_factory=list)
+    diagnosis_history: list[DiagnosisHistoryItem] = Field(default_factory=list)
 
     trace_path: str
     artifact_dir: str

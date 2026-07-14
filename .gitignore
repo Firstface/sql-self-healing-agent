@@ -61,3 +61,5 @@ memory_store/index/keyword_index/*
 # Logs
 *.log
 logs/
+
+.audit_deps/
