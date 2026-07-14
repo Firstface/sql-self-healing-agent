@@ -1,0 +1,22 @@
+.gitignore
+  s_8267c8cb2b2917::t_2731bc85e2310a 66
+  s_8267c8cb2b2917::t_fbef098e37f4ff 65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f093a25d3437662fa0042a7063b96d7f64723830",
+  "prompts": {},
+  "sessions": {
+    "s_8267c8cb2b2917": {
+      "agent_id": {
+        "tool": "trae-cue",
+        "id": "ai_tab-icr-6bdf6d08-e239-4136-9ad9-aed48a3983a3",
+        "model": "default"
+      },
+      "human_author": "liweiyi.1391157 <liweiyi.1391157@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
