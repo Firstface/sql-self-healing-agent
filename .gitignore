@@ -63,3 +63,4 @@ memory_store/index/keyword_index/*
 logs/
 
 .audit_deps/
+02_final_design.md
