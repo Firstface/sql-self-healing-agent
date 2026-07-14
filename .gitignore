@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing / coverage
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+htmlcov/
+.tox/
+
+# Project-specific runtime data
+sessions/*
+!sessions/.gitkeep
+
+memory_store/consolidation/proposals/*
+!memory_store/consolidation/proposals/.gitkeep
+memory_store/experiences/*
+!memory_store/experiences/.gitkeep
+memory_store/index/fingerprint_index/*
+!memory_store/index/fingerprint_index/.gitkeep
+memory_store/index/keyword_index/*
+!memory_store/index/keyword_index/.gitkeep
+
+# Logs
+*.log
+logs/

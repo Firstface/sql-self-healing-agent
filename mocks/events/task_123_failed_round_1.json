@@ -1,0 +1,7 @@
+{
+  "id": "task_123",
+  "status": "FAILED",
+  "sql": "SELECT user_id, pay_amt FROM dwd_order_detail WHERE date = ",
+  "error_message": "Task failed, see logs for details",
+  "log_path": "mocks/logs/task_123_round_1.log"
+}
