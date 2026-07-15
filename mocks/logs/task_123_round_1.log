@@ -1,0 +1,4 @@
+2026-07-14 08:00:00 INFO Hive task started
+2026-07-14 08:00:01 ERROR SemanticException [Error 10002]: Invalid column reference pay_amt
+Caused by: HiveSQLException: Error while compiling statement
+Caused by: SemanticException: Invalid column reference pay_amt

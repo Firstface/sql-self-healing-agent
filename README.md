@@ -2,11 +2,11 @@
 
 SQL Self-Healing Agent 是一个事件驱动的 SQL 修复组件。上游系统负责执行 SQL、判定成功以及控制重试轮次；Agent 每次只处理一个 `UpstreamTaskEvent`，并返回一个 `AgentExternalResult`。Agent 本身不会执行 SQL，也不会把 `SQL_READY` 当作修复成功；真正成功只能由后续 `SUCCESS` 事件确认。
 
-当前已完成 **M1 骨架与事件入口** 和 **M2 单候选生成**。
+当前已完成 **M1 骨架与事件入口**、**M2 单候选生成** 和 **M3 Mock 上游闭环**。
 
 ## 当前能力
 
-M2 已支持：
+当前已支持：
 
 - 唯一外部入口：`UpstreamTaskEvent → handle_upstream_event → AgentExternalResult`
 - FAILED/SUCCESS 事件持久化与幂等处理
@@ -21,6 +21,10 @@ M2 已支持：
 - Ollama 和 Ark/OpenAI 两种 LLM Provider
 - Session、Attempt、Trace 和 Artifact 本地持久化
 - 所有终止结果的重复事件一致返回
+- Mock 上游控制的多轮 FAILED → SQL_READY → SUCCESS 闭环
+- 上一候选真实失败后的 PostReflection 和错误振荡检测
+- SUCCESS SQL 通过 SQLMatcher 命中历史候选后确认成功
+- 仅在匹配 SUCCESS 后写入最小 Experience，按 Session + Attempt 幂等
 
 Validation 会阻断危险语句、写类型引入、WHERE 弱化、JOIN 条件变化、GROUP BY 粒度变化、INSERT 目标或静态分区变化，以及 RepairPlan 之外的修改。写类型 SQL 无法可靠确认时 fail-closed。
 
@@ -102,6 +106,44 @@ sql-heal handle-upstream-event \
 
 重复提交同一事件不会创建新的 Attempt、重复追加 Trace，且会返回首次持久化的外部结果。
 
+## Mock 上游闭环
+
+两轮失败后成功：
+
+```bash
+sql-heal mock-upstream-event-run \
+  --scenario mocks/scenarios/two_step_column_then_type.json
+```
+
+预期关键输出：
+
+```text
+Mock upstream event run finished
+status: MOCK_SUCCESS
+task_id: task_two_step_column_then_type
+attempt_count: 2
+memory_written: true
+```
+
+该场景第一轮将 `pay_amt` 替换为 `payment_amount`；Mock 上游重跑后反馈类型错误，第二轮触发 PostReflection 并生成 `CAST(payment_amount AS BIGINT)`；Mock 上游确认成功后推送 SUCCESS，Agent 匹配历史候选并写入 Experience。
+
+三轮均失败：
+
+```bash
+sql-heal mock-upstream-event-run \
+  --scenario mocks/scenarios/retry_exhausted_manual_required.json
+```
+
+预期关键输出：
+
+```text
+status: MOCK_RETRY_EXHAUSTED
+attempt_count: 3
+memory_written: false
+```
+
+循环只存在于 Mock 上游 Runner；Agent 每次仍只处理一个事件，不执行 SQL、不控制上游重试次数。
+
 ## 本地运行数据
 
 每个任务的运行数据保存在：
@@ -116,7 +158,7 @@ sessions/{session_id}/
 └── trace.jsonl
 ```
 
-M2 主要 Artifact 包括：
+M2/M3 主要 Artifact 包括：
 
 ```text
 upstream_event.json
@@ -130,6 +172,7 @@ sql_candidate.sql
 sql_diff_summary.json
 validation_result.json
 pre_reflection_result.json
+post_reflection_result.json
 external_result.json
 ```
 
@@ -144,10 +187,10 @@ python3.12 -m unittest discover -v
 git diff --check
 ```
 
-M2 验收基线：
+M3 验收基线：
 
 ```text
-Ran 49 tests
+Ran 57 tests
 OK
 ```
 
@@ -155,13 +198,12 @@ OK
 
 ## 当前边界
 
-以下内容尚未实现，属于后续里程碑：
+以下内容尚未实现，属于 M4 或 MVP 范围外：
 
-- M3 Mock 上游驱动的 FAILED → 重试 → SUCCESS 多轮闭环
-- 完整 PostReflection
-- SUCCESS 后候选匹配与成功 Memory 写入
-- M4 Memory 双索引及 `memory consolidate`
-- `mock-upstream-event-run`、`inspect`、`memory` CLI 的完整实现
+- Memory keyword/fingerprint 双索引与检索复用
+- `memory list` 和 `memory consolidate`
+- Consolidation Proposal 与索引原子重建
+- `inspect` CLI 的完整实现
 - 真实元数据 API 和真实 SQL 执行
 
 同一 Attempt 内最多一次 `REGENERATE` 是 M2 的候选生成机制，不是 Agent 自主管理的上游重试循环。

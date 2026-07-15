@@ -1,0 +1,2 @@
+2026-07-15 03:00:00 ERROR SemanticException: Invalid column reference pay_amt
+Caused by: HiveSQLException: Invalid column reference pay_amt

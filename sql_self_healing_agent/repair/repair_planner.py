@@ -20,8 +20,43 @@ class RepairPlanner:
         diagnosis = planner_input.diagnosis
         if not diagnosis.is_repairable:
             return self._manual(diagnosis.manual_repair_reason or "当前错误不可安全自动修复。")
+        if diagnosis.diagnosed_error_type is DiagnosedErrorType.TYPE_MISMATCH:
+            if (
+                planner_input.post_reflection_result
+                and planner_input.post_reflection_result.get("status") == "OSCILLATING"
+            ):
+                return self._manual("错误出现振荡，请人工确认修复方向。")
+            if not diagnosis.primary_entity or not planner_input.metadata_snapshot:
+                return self._manual("无法确认类型不匹配字段或当前表元数据。")
+            column = next(
+                (
+                    column
+                    for table in planner_input.metadata_snapshot.tables
+                    for column in table.columns
+                    if column.name.casefold() == diagnosis.primary_entity.casefold()
+                ),
+                None,
+            )
+            if column is None or not column.data_type:
+                return self._manual("元数据中无法确认类型不匹配字段。")
+            return RepairPlan(
+                plan_id=f"plan_{uuid.uuid4().hex}",
+                repairable=True,
+                actions=[
+                    RepairAction(
+                        action_type=RepairActionType.ADD_CAST,
+                        target_fragment=diagnosis.primary_entity,
+                        replacement_fragment=f"CAST({diagnosis.primary_entity} AS BIGINT)",
+                        reason="当前日志与元数据确认需要受控类型转换",
+                        evidence=diagnosis.primary_evidence,
+                        risk_level="MEDIUM",
+                    )
+                ],
+                constraints=CONSTRAINTS,
+                confidence=0.8,
+            )
         if diagnosis.diagnosed_error_type is not DiagnosedErrorType.COLUMN_NOT_FOUND:
-            return self._manual("M2 当前没有该错误类型的安全修复动作。")
+            return self._manual("当前没有该错误类型的安全修复动作。")
         if not diagnosis.primary_entity or not planner_input.metadata_snapshot:
             return self._manual("无法确认缺失字段或当前表元数据。")
         candidates = self.metadata_provider.find_column_candidates(diagnosis.primary_entity, planner_input.metadata_snapshot.tables)

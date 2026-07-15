@@ -18,3 +18,5 @@ def structured_prompt(system: str, payload: BaseModel, response_model: type[Base
         + "\n<<<INPUT_END>>>\nJSON Schema:\n"
         + json.dumps(response_model.model_json_schema(), ensure_ascii=False)
     )
+
+POST_REFLECTION_SYSTEM = """你是 SQL 修复失败反思器，不是 SQL 生成器。判断上一轮候选 SQL 被上游真实重跑失败后，错误是在推进、无变化、回归、无关还是振荡。不要判断成功，不要生成或修改 SQL。成功只能来自上游 SUCCESS event。只输出 PostReflectionResult JSON。"""

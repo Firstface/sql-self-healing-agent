@@ -10,16 +10,21 @@ from sql_self_healing_agent.core.time_utils import utc_now_iso
 from sql_self_healing_agent.diagnostics.diagnosis_fusion import DiagnosisFusion
 from sql_self_healing_agent.diagnostics.llm_diagnoser import LLMDiagnoser
 from sql_self_healing_agent.llm.llm_client import LLMClient, LLMClientError
-from sql_self_healing_agent.diagnostics.diagnosis_models import DiagnosisHistoryItem, DiagnosisInput
+from sql_self_healing_agent.diagnostics.diagnosis_models import DiagnosisHistoryItem, DiagnosisInput, DiagnosisResult
 from sql_self_healing_agent.diagnostics.rule_classifier import RuleClassifier
 from sql_self_healing_agent.logs.log_compressor import LogCompressor
 from sql_self_healing_agent.memory.memory_retriever import MemoryRetriever
+from sql_self_healing_agent.memory.memory_writer import MemoryWriter
 from sql_self_healing_agent.metadata.metadata_models import MetadataSnapshot
 from sql_self_healing_agent.metadata.mock_metadata_provider import MockMetadataProvider
 from sql_self_healing_agent.metadata.sql_table_extractor import SQLTableExtractor
 from sql_self_healing_agent.repair.evaluator import RepairEvaluator
-from sql_self_healing_agent.repair.reflection import PreReflectionDecision, PreReflectionInput
-from sql_self_healing_agent.repair.repair_models import RepairPlannerInput, SQLGeneratorInput
+from sql_self_healing_agent.repair.reflection import (
+    PostReflectionInput,
+    PreReflectionDecision,
+    PreReflectionInput,
+)
+from sql_self_healing_agent.repair.repair_models import RepairPlan, RepairPlannerInput, SQLGeneratorInput
 from sql_self_healing_agent.repair.repair_planner import RepairPlanner
 from sql_self_healing_agent.repair.sql_generator import SQLGenerator, build_diff
 from sql_self_healing_agent.repair.validator import Validator
@@ -29,7 +34,7 @@ from sql_self_healing_agent.trace.trace_writer import TraceWriter
 
 
 class RepairAgentService:
-    def __init__(self, sessions_dir: Path | str = Path("sessions"), llm_client: LLMClient | None = None, metadata_path: Path | str = Path("mocks/metadata/tables.json"), keyword_vocab_path: Path | str | None = None, allow_medium_risk: bool = False) -> None:
+    def __init__(self, sessions_dir: Path | str = Path("sessions"), llm_client: LLMClient | None = None, metadata_path: Path | str = Path("mocks/metadata/tables.json"), keyword_vocab_path: Path | str | None = None, allow_medium_risk: bool = False, memory_dir: Path | str = Path("memory_store")) -> None:
         self.session_store = SessionStore(sessions_dir)
         self.trace_writer = TraceWriter(sessions_dir)
         self.artifact_store = ArtifactStore(sessions_dir)
@@ -44,6 +49,7 @@ class RepairAgentService:
         self.llm_diagnoser = LLMDiagnoser(self.llm_client) if self.llm_client is not None else None
         self.table_extractor = SQLTableExtractor()
         self.memory_retriever = MemoryRetriever()
+        self.memory_writer = MemoryWriter(memory_dir)
         self.repair_planner = RepairPlanner(self.metadata_provider)
         self.sql_generator = SQLGenerator(self.llm_client)
         self.validator = Validator(allow_medium_risk=allow_medium_risk)
@@ -104,6 +110,15 @@ class RepairAgentService:
             if session.latest_sql_candidate:
                 return AgentExternalResult(status="SQL_READY", sql=session.latest_sql_candidate)
             return AgentExternalResult(status="HUMAN_REQUIRED", message="该失败事件已处理，但没有安全候选 SQL。")
+        previous_attempt = None
+        if (
+            session.latest_sql_candidate
+            and session.latest_sql_candidate_attempt_id
+            and self.sql_matcher.match(event.sql, session.latest_sql_candidate)
+        ):
+            previous_attempt = self.session_store.load_attempt(
+                session, session.latest_sql_candidate_attempt_id
+            )
         event_record = self.session_store.create_event_record(event)
         self.session_store.append_upstream_event(session, event_record)
         self.trace_writer.emit(session.session_id, "upstream_event_received", "upstream_event", {"status": event.status})
@@ -111,6 +126,9 @@ class RepairAgentService:
         session.updated_at = utc_now_iso()
         self.session_store.save_session(session)
         attempt = self.session_store.create_attempt(session, event_record)
+        if previous_attempt is not None:
+            attempt.previous_attempt_id = previous_attempt.attempt_id
+            self.session_store.save_attempt(session, attempt)
         self.artifact_store.save_json(session.session_id, attempt.attempt_id, "upstream_event.json", event_record.model_dump(mode="json"))
         self.trace_writer.emit(session.session_id, "attempt_created", "orchestrator", {"attempt_no": attempt.attempt_no}, attempt.attempt_id)
         try:
@@ -154,6 +172,29 @@ class RepairAgentService:
             self.session_store.save_session(session)
             self.trace_writer.emit(session.session_id, "diagnosis_finished", "diagnosis", {"diagnosed_error_type": diagnosis.diagnosed_error_type.value, "confidence": diagnosis.confidence}, attempt.attempt_id)
 
+            post_reflection = None
+            if previous_attempt is not None:
+                self.trace_writer.emit(session.session_id, "post_reflection_started", "post_reflection", {}, attempt.attempt_id)
+                previous_diagnosis = self._load_attempt_artifact(previous_attempt.diagnosis_path, DiagnosisResult)
+                previous_plan = self._load_attempt_artifact(previous_attempt.repair_plan_path, RepairPlan)
+                if previous_diagnosis is not None and previous_plan is not None and previous_attempt.sql_candidate:
+                    previous_attempt.status = AttemptStatus.UPSTREAM_FAILED
+                    previous_attempt.updated_at = utc_now_iso()
+                    self.session_store.save_attempt(session, previous_attempt)
+                    post_reflection = self.evaluator.post_reflect(PostReflectionInput(
+                        previous_attempt=previous_attempt,
+                        previous_diagnosis=previous_diagnosis,
+                        previous_repair_plan=previous_plan,
+                        previous_sql_candidate=previous_attempt.sql_candidate,
+                        current_failed_sql=event.sql,
+                        current_log_digest=log_digest,
+                        current_diagnosis=diagnosis,
+                        diagnosis_history=session.diagnosis_history,
+                    ))
+                    attempt.post_reflection_result_path = self.artifact_store.save_json(session.session_id, attempt.attempt_id, "post_reflection_result.json", post_reflection.model_dump(mode="json"))
+                    self.session_store.save_attempt(session, attempt)
+                    self.trace_writer.emit(session.session_id, "post_reflection_finished", "post_reflection", {"status": post_reflection.status.value}, attempt.attempt_id)
+
             extraction = self.table_extractor.extract(event.sql)
             tables, missing, provider_errors = [], [], []
             for table_ref in extraction.tables:
@@ -171,7 +212,7 @@ class RepairAgentService:
             attempt.memory_retrieval_path = self.artifact_store.save_json(session.session_id, attempt.attempt_id, "memory_retrieval.json", memory.model_dump(mode="json"))
 
             self.trace_writer.emit(session.session_id, "repair_plan_started", "repair_plan", {}, attempt.attempt_id)
-            plan = self.repair_planner.plan(RepairPlannerInput(failed_sql=event.sql, diagnosis=diagnosis, log_digest=log_digest, metadata_snapshot=snapshot, memory_retrieval=memory))
+            plan = self.repair_planner.plan(RepairPlannerInput(failed_sql=event.sql, diagnosis=diagnosis, log_digest=log_digest, metadata_snapshot=snapshot, memory_retrieval=memory, post_reflection_result=post_reflection.model_dump(mode="json") if post_reflection else None))
             attempt.repair_plan_path = self.artifact_store.save_json(session.session_id, attempt.attempt_id, "repair_plan.json", plan.model_dump(mode="json"))
             attempt.status = AttemptStatus.PLANNED
             self.session_store.save_attempt(session, attempt)
@@ -278,6 +319,15 @@ class RepairAgentService:
                 AgentExternalResult(status="HUMAN_REQUIRED", message="Agent 内部处理失败，请人工介入。"),
             )
 
+    @staticmethod
+    def _load_attempt_artifact(path: str | None, model_type):
+        if not path:
+            return None
+        artifact_path = Path(path)
+        if not artifact_path.exists():
+            return None
+        return model_type.model_validate(read_json(artifact_path))
+
     def _human(self, session: RepairSession, attempt, message: str) -> AgentExternalResult:
         attempt.status = AttemptStatus.HUMAN_REQUIRED
         attempt.updated_at = utc_now_iso()
@@ -294,8 +344,37 @@ class RepairAgentService:
 
     def _handle_success_event(self, event: UpstreamTaskEvent) -> AgentExternalResult:
         session = self.session_store.load_or_create_for_event(event)
-        if not self._is_duplicate_success_event(session, event):
+        duplicate = self._is_duplicate_success_event(session, event)
+        if not duplicate:
             event_record = self.session_store.create_event_record(event)
             self.session_store.append_upstream_event(session, event_record)
             self.trace_writer.emit(session.session_id, "upstream_success_received", "upstream_event", {})
+        matched_attempt = None
+        for attempt_id in reversed(session.attempt_ids):
+            attempt = self.session_store.load_attempt(session, attempt_id)
+            if attempt.sql_candidate and self.sql_matcher.match(event.sql, attempt.sql_candidate):
+                matched_attempt = attempt
+                break
+        if matched_attempt is None:
+            self.trace_writer.emit(session.session_id, "upstream_success_unmatched_candidate", "upstream_event", {})
+            return AgentExternalResult(status="SUCCESS_ACK")
+
+        matched_attempt.status = AttemptStatus.UPSTREAM_CONFIRMED_SUCCESS
+        matched_attempt.updated_at = utc_now_iso()
+        session.status = SessionStatus.UPSTREAM_CONFIRMED_SUCCESS
+        session.confirmed_sql = event.sql
+        session.confirmed_attempt_id = matched_attempt.attempt_id
+        session.updated_at = utc_now_iso()
+        self.session_store.save_attempt(session, matched_attempt)
+        self.session_store.save_session(session)
+        self.trace_writer.emit(session.session_id, "upstream_success_matched", "upstream_event", {"attempt_id": matched_attempt.attempt_id}, matched_attempt.attempt_id)
+        metadata = self._load_attempt_artifact(matched_attempt.metadata_snapshot_path, MetadataSnapshot)
+        repair_plan = self._load_attempt_artifact(matched_attempt.repair_plan_path, RepairPlan)
+        if not duplicate:
+            self.trace_writer.emit(session.session_id, "memory_write_started", "memory", {}, matched_attempt.attempt_id)
+        experience = self.memory_writer.write_success_experience(
+            session, matched_attempt, event.sql, metadata, repair_plan
+        )
+        if not duplicate:
+            self.trace_writer.emit(session.session_id, "memory_write_finished", "memory", {"experience_id": experience.experience_id}, matched_attempt.attempt_id)
         return AgentExternalResult(status="SUCCESS_ACK")

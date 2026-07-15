@@ -1,0 +1,2 @@
+2026-07-15 03:03:00 ERROR Type mismatch: cannot cast payment_amount string to bigint
+Caused by: HiveSQLException: Cannot compare payment_amount string and bigint
