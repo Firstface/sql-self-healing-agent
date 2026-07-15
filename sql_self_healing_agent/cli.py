@@ -6,13 +6,13 @@ from pydantic import ValidationError
 
 from sql_self_healing_agent.core.atomic_io import read_json
 from sql_self_healing_agent.core.models import UpstreamTaskEvent
-from sql_self_healing_agent.llm.llm_client import OllamaLLMClient
+from sql_self_healing_agent.llm.llm_client import build_llm_client_from_env
 from sql_self_healing_agent.orchestrator.repair_agent_service import RepairAgentService
 
 
 def run_handle_upstream_event(event_path: str) -> None:
     event = UpstreamTaskEvent.model_validate(read_json(Path(event_path)))
-    result = RepairAgentService(llm_client=OllamaLLMClient()).handle_upstream_event(event)
+    result = RepairAgentService(llm_client=build_llm_client_from_env()).handle_upstream_event(event)
     print(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2))
 
 
