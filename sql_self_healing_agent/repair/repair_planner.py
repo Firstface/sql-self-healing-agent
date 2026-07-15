@@ -18,14 +18,14 @@ class RepairPlanner:
 
     def plan(self, planner_input: RepairPlannerInput) -> RepairPlan:
         diagnosis = planner_input.diagnosis
+        if (
+            planner_input.post_reflection_result
+            and planner_input.post_reflection_result.get("status") == "OSCILLATING"
+        ):
+            return self._manual("错误出现振荡，请人工确认修复方向。")
         if not diagnosis.is_repairable:
             return self._manual(diagnosis.manual_repair_reason or "当前错误不可安全自动修复。")
         if diagnosis.diagnosed_error_type is DiagnosedErrorType.TYPE_MISMATCH:
-            if (
-                planner_input.post_reflection_result
-                and planner_input.post_reflection_result.get("status") == "OSCILLATING"
-            ):
-                return self._manual("错误出现振荡，请人工确认修复方向。")
             if not diagnosis.primary_entity or not planner_input.metadata_snapshot:
                 return self._manual("无法确认类型不匹配字段或当前表元数据。")
             column = next(

@@ -19,7 +19,9 @@ class DiagnosisFusion:
             r"(?i)invalid column reference\s+[`'\"]?([A-Za-z_][\w$]*)",
             r"(?i)(?:column not found|unknown column|cannot resolve column)\s*[: ]+[`'\"]?([A-Za-z_][\w$]*)",
             r"(?i)table(?: not found| does not exist)\s*[: ]+[`'\"]?([\w.]+)",
-            r"(?i)(?:cannot cast|type mismatch|cannot compare)[^\n]*?[`'\"]?([A-Za-z_][\w$]*)",
+            r"(?i)cannot\s+compare\s+[`'\"]?([A-Za-z_][\w$]*)",
+            r"(?i)cannot\s+cast\s+[`'\"]?([A-Za-z_][\w$]*)",
+            r"(?i)type\s+mismatch[^\n]*?(?:column|field)\s+[`'\"]?([A-Za-z_][\w$]*)",
         )
         for pattern in patterns:
             match = re.search(pattern, evidence)

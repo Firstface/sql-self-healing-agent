@@ -40,3 +40,35 @@ class SQLGeneratorFailureTest(unittest.TestCase):
         self.assertFalse(result.generated)
         self.assertTrue(result.cannot_generate_safely)
         self.assertEqual(result.reason, "LLM 未能返回合法的结构化 SQL 结果。")
+
+    def test_oscillation_blocks_column_not_found_before_planning(self) -> None:
+        provider = MockMetadataProvider(Path(__file__).parents[1] / "mocks/metadata/tables.json")
+        extraction = SQLTableExtractor().extract("SELECT pay_amt FROM dwd_order_detail")
+        table = provider.get_table_metadata("dwd_order_detail")
+        snapshot = MetadataSnapshot(extraction_result=extraction, tables=[table], created_at=utc_now_iso())
+        diagnosis = DiagnosisResult(
+            diagnosed_error_type=DiagnosedErrorType.COLUMN_NOT_FOUND,
+            diagnosed_keywords=["column_not_found"],
+            error_fingerprint="COLUMN_NOT_FOUND:pay_amt:hive",
+            confidence=0.9,
+            is_repairable=True,
+            primary_entity="pay_amt",
+        )
+        plan = RepairPlanner(provider).plan(
+            RepairPlannerInput(
+                failed_sql="SELECT pay_amt FROM dwd_order_detail",
+                diagnosis=diagnosis,
+                log_digest=LogDigest(log_readable=True),
+                metadata_snapshot=snapshot,
+                post_reflection_result={
+                    "status": "OSCILLATING",
+                    "previous_error_resolved": False,
+                    "new_error_introduced": True,
+                    "recommendation_for_next_plan": "stop",
+                    "reasons": ["A/B/A"],
+                    "confidence": 1.0,
+                },
+            )
+        )
+        self.assertFalse(plan.repairable)
+        self.assertEqual(plan.actions, [])

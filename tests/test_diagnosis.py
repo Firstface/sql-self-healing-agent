@@ -21,3 +21,27 @@ class DiagnosisTest(unittest.TestCase):
         self.assertEqual(result.diagnosed_error_type, DiagnosedErrorType.COLUMN_NOT_FOUND)
         self.assertEqual(result.primary_entity, "pay_amt")
         self.assertTrue(set(result.diagnosed_keywords).issubset(set(vocab["COLUMN_NOT_FOUND"])))
+
+    def test_type_mismatch_extracts_column_after_cannot_compare(self) -> None:
+        vocab = json.loads((Path(__file__).parents[1] / "sql_self_healing_agent/logs/keyword_vocab.json").read_text())
+        diagnosis_input = DiagnosisInput(
+            failed_sql="SELECT payment_amount FROM dwd_order_detail",
+            log_digest=LogDigest(
+                log_readable=True,
+                matched_categories=["TYPE_MISMATCH"],
+                suspected_engine_error="Cannot compare payment_amount string and bigint",
+                root_cause_summary="Cannot compare payment_amount string and bigint",
+            ),
+            keyword_vocab=vocab,
+            allowed_error_types=[item.value for item in DiagnosedErrorType],
+        )
+        rule = RuleClassifier().classify(diagnosis_input)
+        result = DiagnosisFusion().fuse(diagnosis_input, rule, None)
+        self.assertEqual(result.diagnosed_error_type, DiagnosedErrorType.TYPE_MISMATCH)
+        self.assertEqual(result.primary_entity, "payment_amount")
+
+    def test_type_mismatch_extracts_column_after_cannot_cast(self) -> None:
+        self.assertEqual(
+            DiagnosisFusion._entity("Cannot cast payment_amount string to bigint"),
+            "payment_amount",
+        )

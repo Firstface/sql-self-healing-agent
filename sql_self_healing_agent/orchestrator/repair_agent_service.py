@@ -59,7 +59,20 @@ class RepairAgentService:
         if event.status == "FAILED":
             return self._handle_failed_event(event)
         if event.status == "SUCCESS":
-            return self._handle_success_event(event)
+            try:
+                return self._handle_success_event(event)
+            except Exception as error:
+                session = self.session_store.load_or_create_for_event(event)
+                self.trace_writer.emit(
+                    session.session_id,
+                    "system_error",
+                    "orchestrator",
+                    {"error_type": type(error).__name__},
+                )
+                return AgentExternalResult(
+                    status="HUMAN_REQUIRED",
+                    message="SUCCESS 事件处理失败，请人工检查本地状态。",
+                )
         return AgentExternalResult(status="NO_SQL", message=f"Unsupported upstream event status: {event.status}")
 
     def _is_duplicate_failed_event(self, session: RepairSession, event: UpstreamTaskEvent) -> bool:
@@ -356,7 +369,8 @@ class RepairAgentService:
                 matched_attempt = attempt
                 break
         if matched_attempt is None:
-            self.trace_writer.emit(session.session_id, "upstream_success_unmatched_candidate", "upstream_event", {})
+            if not duplicate:
+                self.trace_writer.emit(session.session_id, "upstream_success_unmatched_candidate", "upstream_event", {})
             return AgentExternalResult(status="SUCCESS_ACK")
 
         matched_attempt.status = AttemptStatus.UPSTREAM_CONFIRMED_SUCCESS
@@ -367,14 +381,29 @@ class RepairAgentService:
         session.updated_at = utc_now_iso()
         self.session_store.save_attempt(session, matched_attempt)
         self.session_store.save_session(session)
-        self.trace_writer.emit(session.session_id, "upstream_success_matched", "upstream_event", {"attempt_id": matched_attempt.attempt_id}, matched_attempt.attempt_id)
-        metadata = self._load_attempt_artifact(matched_attempt.metadata_snapshot_path, MetadataSnapshot)
-        repair_plan = self._load_attempt_artifact(matched_attempt.repair_plan_path, RepairPlan)
         if not duplicate:
-            self.trace_writer.emit(session.session_id, "memory_write_started", "memory", {}, matched_attempt.attempt_id)
-        experience = self.memory_writer.write_success_experience(
-            session, matched_attempt, event.sql, metadata, repair_plan
-        )
-        if not duplicate:
-            self.trace_writer.emit(session.session_id, "memory_write_finished", "memory", {"experience_id": experience.experience_id}, matched_attempt.attempt_id)
-        return AgentExternalResult(status="SUCCESS_ACK")
+            self.trace_writer.emit(session.session_id, "upstream_success_matched", "upstream_event", {"attempt_id": matched_attempt.attempt_id}, matched_attempt.attempt_id)
+        try:
+            metadata = self._load_attempt_artifact(matched_attempt.metadata_snapshot_path, MetadataSnapshot)
+            repair_plan = self._load_attempt_artifact(matched_attempt.repair_plan_path, RepairPlan)
+            if not duplicate:
+                self.trace_writer.emit(session.session_id, "memory_write_started", "memory", {}, matched_attempt.attempt_id)
+            experience = self.memory_writer.write_success_experience(
+                session, matched_attempt, event.sql, metadata, repair_plan
+            )
+            if not duplicate:
+                self.trace_writer.emit(session.session_id, "memory_write_finished", "memory", {"experience_id": experience.experience_id}, matched_attempt.attempt_id)
+            return AgentExternalResult(status="SUCCESS_ACK")
+        except Exception as error:
+            if not duplicate:
+                self.trace_writer.emit(
+                    session.session_id,
+                    "stage_failed",
+                    "memory",
+                    {"error_type": type(error).__name__},
+                    matched_attempt.attempt_id,
+                )
+            return AgentExternalResult(
+                status="HUMAN_REQUIRED",
+                message="上游成功已确认，但成功经验写入失败，请人工检查存储。",
+            )
