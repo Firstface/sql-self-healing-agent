@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from sql_self_healing_agent.artifacts.artifact_store import ArtifactStore
+from sql_self_healing_agent.core.atomic_io import read_json
 from sql_self_healing_agent.core.enums import AttemptStatus, DiagnosedErrorType, SessionStatus
 from sql_self_healing_agent.core.models import AgentExternalResult, UpstreamTaskEvent
 from sql_self_healing_agent.core.sql_matcher import SQLMatcher
@@ -61,9 +62,45 @@ class RepairAgentService:
     def _is_duplicate_success_event(self, session: RepairSession, event: UpstreamTaskEvent) -> bool:
         return any(record.task_id == event.id and record.status == event.status and self.sql_matcher.match(record.sql, event.sql) for record in session.upstream_events)
 
+    def _load_processed_failed_result(
+        self, session: RepairSession, event: UpstreamTaskEvent
+    ) -> AgentExternalResult | None:
+        matching_event_ids = {
+            record.event_id
+            for record in session.upstream_events
+            if record.task_id == event.id
+            and record.status == event.status
+            and self.sql_matcher.match(record.sql, event.sql)
+            and record.log_path == event.log_path
+        }
+        for attempt_id in reversed(session.attempt_ids):
+            attempt = self.session_store.load_attempt(session, attempt_id)
+            if attempt.input_event_id not in matching_event_ids:
+                continue
+            result_path = (
+                Path(session.artifact_dir) / attempt.attempt_id / "external_result.json"
+            )
+            if result_path.exists():
+                return AgentExternalResult.model_validate(read_json(result_path))
+        return None
+
+    def _persist_external_result(
+        self, session: RepairSession, attempt, result: AgentExternalResult
+    ) -> AgentExternalResult:
+        self.artifact_store.save_json(
+            session.session_id,
+            attempt.attempt_id,
+            "external_result.json",
+            result.model_dump(mode="json"),
+        )
+        return result
+
     def _handle_failed_event(self, event: UpstreamTaskEvent) -> AgentExternalResult:
         session = self.session_store.load_or_create_for_event(event)
         if self._is_duplicate_failed_event(session, event):
+            processed_result = self._load_processed_failed_result(session, event)
+            if processed_result is not None:
+                return processed_result
             if session.latest_sql_candidate:
                 return AgentExternalResult(status="SQL_READY", sql=session.latest_sql_candidate)
             return AgentExternalResult(status="HUMAN_REQUIRED", message="该失败事件已处理，但没有安全候选 SQL。")
@@ -142,29 +179,77 @@ class RepairAgentService:
             if not plan.repairable:
                 return self._human(session, attempt, plan.manual_repair_recommendation or "没有安全修复计划。")
 
-            generation = self.sql_generator.generate(SQLGeneratorInput(failed_sql=event.sql, repair_plan=plan))
+            generator_input = SQLGeneratorInput(failed_sql=event.sql, repair_plan=plan)
+            generation = self.sql_generator.generate(generator_input)
             self.artifact_store.save_json(session.session_id, attempt.attempt_id, "sql_generation_result.json", generation.model_dump(mode="json"))
             if not generation.generated or not generation.sql_candidate:
                 return self._human(session, attempt, generation.reason or "无法安全生成候选 SQL。")
-            attempt.sql_candidate = generation.sql_candidate
-            attempt.sql_candidate_path = self.artifact_store.save_text(session.session_id, attempt.attempt_id, "sql_candidate.sql", generation.sql_candidate)
-            attempt.status = AttemptStatus.GENERATED
-            diff = build_diff(event.sql, generation)
-            self.artifact_store.save_json(session.session_id, attempt.attempt_id, "sql_diff_summary.json", diff.model_dump(mode="json"))
 
-            validation = self.validator.validate(event.sql, generation.sql_candidate, plan, diff)
+            def validate_and_reflect(current_generation):
+                current_diff = build_diff(event.sql, current_generation, plan)
+                current_validation = self.validator.validate(event.sql, current_generation.sql_candidate, plan, current_diff)
+                current_reflection = None
+                if current_validation.allow_return_sql:
+                    current_reflection = self.evaluator.pre_reflect(PreReflectionInput(failed_sql=event.sql, sql_candidate=current_generation.sql_candidate, diagnosis=diagnosis, repair_plan=plan, validation_result=current_validation, sql_diff_summary=current_diff, metadata_snapshot=snapshot, memory_retrieval=memory))
+                return current_diff, current_validation, current_reflection
+
+            diff, validation, reflection = validate_and_reflect(generation)
+            if not validation.allow_return_sql:
+                attempt.validation_result_path = self.artifact_store.save_json(session.session_id, attempt.attempt_id, "validation_result.json", validation.model_dump(mode="json"))
+                self.artifact_store.save_json(session.session_id, attempt.attempt_id, "sql_diff_summary.json", diff.model_dump(mode="json"))
+                attempt.status = AttemptStatus.VALIDATION_BLOCKED
+                self.session_store.save_attempt(session, attempt)
+                return self._persist_external_result(
+                    session,
+                    attempt,
+                    AgentExternalResult(status="NO_SQL", message=validation.reason or "候选 SQL 被 Validation 阻断。"),
+                )
+
+            if reflection is not None and reflection.decision is PreReflectionDecision.REGENERATE:
+                regenerated = self.sql_generator.generate(generator_input, reflection.regeneration_instruction)
+                self.artifact_store.save_json(session.session_id, attempt.attempt_id, "sql_regeneration_result.json", regenerated.model_dump(mode="json"))
+                if not regenerated.generated or not regenerated.sql_candidate:
+                    attempt.status = AttemptStatus.REFLECTION_BLOCKED
+                    self.session_store.save_attempt(session, attempt)
+                    return self._persist_external_result(
+                        session,
+                        attempt,
+                        AgentExternalResult(status="NO_SQL", message="候选 SQL 重生成失败。"),
+                    )
+                generation = regenerated
+                diff, validation, reflection = validate_and_reflect(generation)
+
+            self.artifact_store.save_json(session.session_id, attempt.attempt_id, "sql_diff_summary.json", diff.model_dump(mode="json"))
             attempt.validation_result_path = self.artifact_store.save_json(session.session_id, attempt.attempt_id, "validation_result.json", validation.model_dump(mode="json"))
             if not validation.allow_return_sql:
                 attempt.status = AttemptStatus.VALIDATION_BLOCKED
                 self.session_store.save_attempt(session, attempt)
-                return AgentExternalResult(status="NO_SQL", message=validation.reason or "候选 SQL 被 Validation 阻断。")
-
-            reflection = self.evaluator.pre_reflect(PreReflectionInput(failed_sql=event.sql, sql_candidate=generation.sql_candidate, diagnosis=diagnosis, repair_plan=plan, validation_result=validation, sql_diff_summary=diff, metadata_snapshot=snapshot, memory_retrieval=memory))
+                return self._persist_external_result(
+                    session,
+                    attempt,
+                    AgentExternalResult(status="NO_SQL", message=validation.reason or "候选 SQL 被 Validation 阻断。"),
+                )
+            if reflection is None:
+                attempt.status = AttemptStatus.REFLECTION_BLOCKED
+                self.session_store.save_attempt(session, attempt)
+                return self._persist_external_result(
+                    session,
+                    attempt,
+                    AgentExternalResult(status="NO_SQL", message="候选 SQL 未通过 PreReflection。"),
+                )
             attempt.pre_reflection_result_path = self.artifact_store.save_json(session.session_id, attempt.attempt_id, "pre_reflection_result.json", reflection.model_dump(mode="json"))
             if reflection.decision is not PreReflectionDecision.RETURN_SQL:
                 attempt.status = AttemptStatus.REFLECTION_BLOCKED
                 self.session_store.save_attempt(session, attempt)
-                return AgentExternalResult(status="NO_SQL", message="候选 SQL 未通过 PreReflection。")
+                return self._persist_external_result(
+                    session,
+                    attempt,
+                    AgentExternalResult(status="NO_SQL", message="候选 SQL 未通过 PreReflection。"),
+                )
+
+            attempt.sql_candidate = generation.sql_candidate
+            attempt.sql_candidate_path = self.artifact_store.save_text(session.session_id, attempt.attempt_id, "sql_candidate.sql", generation.sql_candidate)
+            attempt.status = AttemptStatus.GENERATED
             attempt.status = AttemptStatus.SQL_READY
             attempt.updated_at = utc_now_iso()
             session.status = SessionStatus.SQL_READY_PENDING_UPSTREAM
@@ -174,7 +259,11 @@ class RepairAgentService:
             self.session_store.save_attempt(session, attempt)
             self.session_store.save_session(session)
             self.trace_writer.emit(session.session_id, "sql_ready_returned", "orchestrator", {}, attempt.attempt_id)
-            return AgentExternalResult(status="SQL_READY", sql=generation.sql_candidate)
+            return self._persist_external_result(
+                session,
+                attempt,
+                AgentExternalResult(status="SQL_READY", sql=generation.sql_candidate),
+            )
         except Exception as error:
             attempt.status = AttemptStatus.SYSTEM_ERROR
             attempt.updated_at = utc_now_iso()
@@ -183,7 +272,11 @@ class RepairAgentService:
             self.session_store.save_attempt(session, attempt)
             self.session_store.save_session(session)
             self.trace_writer.emit(session.session_id, "system_error", "orchestrator", {"error": str(error)}, attempt.attempt_id)
-            return AgentExternalResult(status="HUMAN_REQUIRED", message="Agent 内部处理失败，请人工介入。")
+            return self._persist_external_result(
+                session,
+                attempt,
+                AgentExternalResult(status="HUMAN_REQUIRED", message="Agent 内部处理失败，请人工介入。"),
+            )
 
     def _human(self, session: RepairSession, attempt, message: str) -> AgentExternalResult:
         attempt.status = AttemptStatus.HUMAN_REQUIRED
@@ -193,7 +286,11 @@ class RepairAgentService:
         self.session_store.save_attempt(session, attempt)
         self.session_store.save_session(session)
         self.trace_writer.emit(session.session_id, "human_required_returned", "orchestrator", {"reason": message}, attempt.attempt_id)
-        return AgentExternalResult(status="HUMAN_REQUIRED", message=message)
+        return self._persist_external_result(
+            session,
+            attempt,
+            AgentExternalResult(status="HUMAN_REQUIRED", message=message),
+        )
 
     def _handle_success_event(self, event: UpstreamTaskEvent) -> AgentExternalResult:
         session = self.session_store.load_or_create_for_event(event)

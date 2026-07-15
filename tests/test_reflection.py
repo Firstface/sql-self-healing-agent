@@ -32,3 +32,26 @@ class ReflectionFailureTest(unittest.TestCase):
         result = RepairEvaluator(FailingReflectionClient()).pre_reflect(reflection_input)
         self.assertEqual(result.decision, PreReflectionDecision.BLOCK)
         self.assertEqual(result.confidence, 0.0)
+
+class ContradictoryReturnClient:
+    def generate_structured(self, prompt, response_model):
+        return response_model.model_validate({
+            "decision": "RETURN_SQL",
+            "confidence": 0.99,
+            "follows_repair_plan": False,
+            "minimal_change": False,
+            "semantic_risk_level": "HIGH",
+            "reasons": ["unsafe"],
+            "violated_constraints": ["extra change"],
+            "regeneration_instruction": None,
+        })
+
+
+class ReflectionConsistencyTest(unittest.TestCase):
+    def test_contradictory_return_sql_is_blocked(self) -> None:
+        plan = RepairPlan(plan_id="plan", repairable=True, actions=[RepairAction(action_type=RepairActionType.REPLACE_COLUMN, target_fragment="a", replacement_fragment="b", reason="test", risk_level="LOW")], confidence=0.9)
+        diagnosis = DiagnosisResult(diagnosed_error_type=DiagnosedErrorType.COLUMN_NOT_FOUND, diagnosed_keywords=["column_not_found"], error_fingerprint="x", confidence=0.9, is_repairable=True)
+        validation = ValidationResult(risk_level=RiskLevel.LOW, passed=True, allow_return_sql=True)
+        reflection_input = PreReflectionInput(failed_sql="SELECT a", sql_candidate="SELECT b", diagnosis=diagnosis, repair_plan=plan, validation_result=validation, sql_diff_summary=SQLDiffSummary(changed_fragment_count=1, changed_fragments=[], parse_success=True))
+        result = RepairEvaluator(ContradictoryReturnClient()).pre_reflect(reflection_input)
+        self.assertEqual(result.decision, PreReflectionDecision.BLOCK)

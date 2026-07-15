@@ -49,7 +49,10 @@ class OllamaLLMClient(LLMClient):
                     base_prompt
                     + "\n上一次输出不符合 JSON Schema。只输出一个合法单行 JSON 对象，不要 Markdown。"
                 )
-        raise LLMClientError(f"Ollama structured output failed: {last_error}") from last_error
+        error_type = type(last_error).__name__ if last_error is not None else "UnknownError"
+        raise LLMClientError(
+            f"Ollama structured output failed after retry: {error_type}"
+        ) from None
 
 
 class ArkLLMClient(LLMClient):

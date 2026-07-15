@@ -17,3 +17,13 @@ class OllamaClientTest(unittest.TestCase):
             self.assertEqual(command[:3], ["ollama", "run", "local-model"])
             self.assertEqual(command[3], "--format")
             self.assertEqual(json.loads(command[4])["type"], "object")
+
+    def test_error_does_not_leak_prompt_or_schema(self) -> None:
+        secret_prompt = "TOP_SECRET_PROMPT_VALUE"
+        with patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, ["ollama", secret_prompt])):
+            with self.assertRaises(Exception) as raised:
+                OllamaLLMClient(model="local-model").generate_structured(secret_prompt, LLMDiagnosisResult)
+        message = str(raised.exception)
+        self.assertNotIn(secret_prompt, message)
+        self.assertNotIn("properties", message)
+        self.assertIn("CalledProcessError", message)

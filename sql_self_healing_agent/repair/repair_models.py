@@ -70,11 +70,10 @@ class SQLGenerationResult(StrictModel):
     sql_candidate: str | None = None
     cannot_generate_safely: bool = False
     reason: str | None = None
-    changed_fragments: list[ChangedFragment] = Field(default_factory=list)
 
 
 class SQLGeneratorLLMOutput(SQLGenerationResult):
-    pass
+    changed_fragments: list[ChangedFragment] = Field(default_factory=list)
 
 
 class SQLDiffSummary(StrictModel):
