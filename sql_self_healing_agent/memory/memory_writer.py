@@ -32,6 +32,7 @@ class MemoryWriter:
 
         existing = self.store.find_by_source(session.session_id, attempt.attempt_id)
         if existing is not None:
+            self.store.rebuild_indices()
             return existing
 
         now = utc_now_iso()
@@ -61,6 +62,7 @@ class MemoryWriter:
             diagnosed_error_type=attempt.diagnosed_error_type,
             diagnosed_keywords=attempt.diagnosed_keywords,
             error_fingerprint=attempt.error_fingerprint or "UNKNOWN:unknown:unknown",
+            primary_entity=(attempt.error_fingerprint.split(":", 2)[1] if attempt.error_fingerprint and ":" in attempt.error_fingerprint else None),
             original_sql=session.original_sql,
             failed_sql=attempt.input_failed_sql,
             confirmed_sql=confirmed_sql,

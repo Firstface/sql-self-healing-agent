@@ -39,6 +39,8 @@ class RepairPlanner:
             )
             if column is None or not column.data_type:
                 return self._manual("元数据中无法确认类型不匹配字段。")
+            replacement = f"CAST({diagnosis.primary_entity} AS BIGINT)"
+            memory_ids = self._matching_memory_ids(planner_input, replacement)
             return RepairPlan(
                 plan_id=f"plan_{uuid.uuid4().hex}",
                 repairable=True,
@@ -46,13 +48,14 @@ class RepairPlanner:
                     RepairAction(
                         action_type=RepairActionType.ADD_CAST,
                         target_fragment=diagnosis.primary_entity,
-                        replacement_fragment=f"CAST({diagnosis.primary_entity} AS BIGINT)",
+                        replacement_fragment=replacement,
                         reason="当前日志与元数据确认需要受控类型转换",
                         evidence=diagnosis.primary_evidence,
                         risk_level="MEDIUM",
                     )
                 ],
                 constraints=CONSTRAINTS,
+                referenced_experience_ids=memory_ids,
                 confidence=0.8,
             )
         if diagnosis.diagnosed_error_type is not DiagnosedErrorType.COLUMN_NOT_FOUND:
@@ -66,7 +69,47 @@ class RepairPlanner:
         second_score = candidates[1].score if len(candidates) > 1 else -1.0
         if best.score < 0.4 or best.score - second_score < 0.05:
             return self._manual("字段候选分数过低或候选不唯一。")
-        return RepairPlan(plan_id=f"plan_{uuid.uuid4().hex}", repairable=True, actions=[RepairAction(action_type=RepairActionType.REPLACE_COLUMN, target_fragment=diagnosis.primary_entity, replacement_fragment=best.candidate_name, reason="元数据确认存在最可靠候选字段", evidence=diagnosis.primary_evidence, risk_level="LOW")], constraints=CONSTRAINTS, confidence=min(0.95, best.score))
+        memory_ids = self._matching_memory_ids(planner_input, best.candidate_name)
+        return RepairPlan(plan_id=f"plan_{uuid.uuid4().hex}", repairable=True, actions=[RepairAction(action_type=RepairActionType.REPLACE_COLUMN, target_fragment=diagnosis.primary_entity, replacement_fragment=best.candidate_name, reason=("当前元数据确认候选，且历史成功经验提供佐证" if memory_ids else "元数据确认存在最可靠候选字段"), evidence=diagnosis.primary_evidence, risk_level="LOW")], constraints=CONSTRAINTS, referenced_experience_ids=memory_ids, confidence=min(0.95, best.score))
+
+    @staticmethod
+    def _matching_memory_ids(
+        planner_input: RepairPlannerInput, planned_replacement: str
+    ) -> list[str]:
+        if planner_input.memory_retrieval is None or planner_input.metadata_snapshot is None:
+            return []
+        diagnosis = planner_input.diagnosis
+        current_columns = {
+            column.name.casefold()
+            for table in planner_input.metadata_snapshot.tables
+            for column in table.columns
+        }
+        matched: list[str] = []
+        for retrieved in planner_input.memory_retrieval.retrieved:
+            experience = retrieved.experience
+            if experience.diagnosed_error_type is not diagnosis.diagnosed_error_type:
+                continue
+            for step in experience.repair_steps:
+                if (
+                    diagnosis.primary_entity
+                    and step.before_fragment
+                    and step.before_fragment.casefold() != diagnosis.primary_entity.casefold()
+                ):
+                    continue
+                if (
+                    not step.after_fragment
+                    or step.after_fragment.casefold() != planned_replacement.casefold()
+                ):
+                    continue
+                if diagnosis.diagnosed_error_type is DiagnosedErrorType.COLUMN_NOT_FOUND:
+                    if step.after_fragment.casefold() in current_columns:
+                        matched.append(experience.experience_id)
+                        break
+                elif diagnosis.diagnosed_error_type is DiagnosedErrorType.TYPE_MISMATCH:
+                    if "cast(" in step.after_fragment.casefold():
+                        matched.append(experience.experience_id)
+                        break
+        return list(dict.fromkeys(matched))
 
     @staticmethod
     def _manual(message: str) -> RepairPlan:

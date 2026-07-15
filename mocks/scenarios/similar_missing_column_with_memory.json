@@ -1,1 +1,19 @@
-{}
+{
+  "scenario_id": "similar_missing_column_with_memory",
+  "task_id": "task_similar_missing_column_with_memory",
+  "max_retry_count": 1,
+  "allow_medium_risk": true,
+  "initial_sql": "SELECT user_id, pay_amt FROM dwd_order_detail WHERE date = ",
+  "rounds": [
+    {
+      "round_no": 1,
+      "upstream_status": "FAILED",
+      "error_message": "Task failed, see logs for details",
+      "log_path": "mocks/logs/task_123_round_1.log",
+      "success_condition": {
+        "must_contain": "payment_amount",
+        "success": true
+      }
+    }
+  ]
+}

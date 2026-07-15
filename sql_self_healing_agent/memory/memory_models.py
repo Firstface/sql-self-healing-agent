@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from sql_self_healing_agent.core.enums import DiagnosedErrorType, ExperienceStatus
@@ -39,14 +41,41 @@ class Experience(StrictModel):
     last_failed_at: str | None = None
 
 
+class KeywordIndex(StrictModel):
+    keyword: str
+    experience_ids: list[str] = Field(default_factory=list)
+
+
+class FingerprintIndex(StrictModel):
+    error_fingerprint: str
+    experience_ids: list[str] = Field(default_factory=list)
+
+
 class RetrievedExperience(StrictModel):
     experience_id: str
     score: float
     match_reasons: list[str]
-    experience: dict
+    experience: Experience
 
 
 class MemoryRetrievalResult(StrictModel):
     retrieved: list[RetrievedExperience]
     fingerprint_matches: list[str] = Field(default_factory=list)
     keyword_matches: list[str] = Field(default_factory=list)
+
+
+ConsolidationActionType = Literal[
+    "MERGE", "MARK_CONFLICT", "MARK_DEPRECATED", "UPDATE_CARD", "KEEP"
+]
+
+
+class ConsolidationAction(StrictModel):
+    action: ConsolidationActionType
+    source_experience_ids: list[str]
+    target_summary: str
+
+
+class ConsolidationProposal(StrictModel):
+    proposal_id: str
+    created_at: str
+    actions: list[ConsolidationAction] = Field(default_factory=list)

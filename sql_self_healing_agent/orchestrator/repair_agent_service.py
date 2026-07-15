@@ -48,7 +48,7 @@ class RepairAgentService:
         self.llm_client = llm_client
         self.llm_diagnoser = LLMDiagnoser(self.llm_client) if self.llm_client is not None else None
         self.table_extractor = SQLTableExtractor()
-        self.memory_retriever = MemoryRetriever()
+        self.memory_retriever = MemoryRetriever(memory_dir)
         self.memory_writer = MemoryWriter(memory_dir)
         self.repair_planner = RepairPlanner(self.metadata_provider)
         self.sql_generator = SQLGenerator(self.llm_client)
@@ -207,6 +207,11 @@ class RepairAgentService:
                     attempt.post_reflection_result_path = self.artifact_store.save_json(session.session_id, attempt.attempt_id, "post_reflection_result.json", post_reflection.model_dump(mode="json"))
                     self.session_store.save_attempt(session, attempt)
                     self.trace_writer.emit(session.session_id, "post_reflection_finished", "post_reflection", {"status": post_reflection.status.value}, attempt.attempt_id)
+                    if previous_plan.referenced_experience_ids:
+                        self.memory_writer.store.record_failure(
+                            previous_plan.referenced_experience_ids,
+                            "; ".join(post_reflection.reasons),
+                        )
 
             extraction = self.table_extractor.extract(event.sql)
             tables, missing, provider_errors = [], [], []
@@ -221,8 +226,10 @@ class RepairAgentService:
                     provider_errors.append(f"{table_ref.normalized_name}: {error}")
             snapshot = MetadataSnapshot(extraction_result=extraction, tables=tables, missing_tables=missing, provider_errors=provider_errors, created_at=utc_now_iso())
             attempt.metadata_snapshot_path = self.artifact_store.save_json(session.session_id, attempt.attempt_id, "metadata_snapshot.json", snapshot.model_dump(mode="json"))
+            self.trace_writer.emit(session.session_id, "memory_retrieval_started", "memory", {}, attempt.attempt_id)
             memory = self.memory_retriever.retrieve(diagnosis, event.sql, snapshot)
             attempt.memory_retrieval_path = self.artifact_store.save_json(session.session_id, attempt.attempt_id, "memory_retrieval.json", memory.model_dump(mode="json"))
+            self.trace_writer.emit(session.session_id, "memory_retrieval_finished", "memory", {"retrieved_count": len(memory.retrieved)}, attempt.attempt_id)
 
             self.trace_writer.emit(session.session_id, "repair_plan_started", "repair_plan", {}, attempt.attempt_id)
             plan = self.repair_planner.plan(RepairPlannerInput(failed_sql=event.sql, diagnosis=diagnosis, log_digest=log_digest, metadata_snapshot=snapshot, memory_retrieval=memory, post_reflection_result=post_reflection.model_dump(mode="json") if post_reflection else None))

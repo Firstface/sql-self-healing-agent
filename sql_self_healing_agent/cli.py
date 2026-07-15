@@ -7,6 +7,8 @@ from pydantic import ValidationError
 from sql_self_healing_agent.core.atomic_io import read_json
 from sql_self_healing_agent.core.models import UpstreamTaskEvent
 from sql_self_healing_agent.llm.llm_client import build_llm_client_from_env
+from sql_self_healing_agent.memory.memory_consolidator import MemoryConsolidator
+from sql_self_healing_agent.memory.memory_store import MemoryStore
 from sql_self_healing_agent.mock_external_system.mock_upstream_event_executor import MockUpstreamEventExecutor
 from sql_self_healing_agent.mock_external_system.mock_upstream_event_runner import MockUpstreamEventRunner
 from sql_self_healing_agent.mock_external_system.mock_upstream_models import MockScenario
@@ -51,6 +53,38 @@ def run_mock_upstream_event(scenario_path: str) -> None:
         print(f"message: {result.message}")
 
 
+
+def run_memory_list(error_type: str | None, keyword: str | None) -> None:
+    experiences = MemoryStore().list_experiences()
+    if error_type:
+        experiences = [
+            item for item in experiences if item.diagnosed_error_type.value == error_type
+        ]
+    if keyword:
+        experiences = [item for item in experiences if keyword in item.diagnosed_keywords]
+    print("Experience Memory")
+    if not experiences:
+        print("(empty)")
+        return
+    for index, experience in enumerate(experiences, start=1):
+        print(f"{index}. {experience.experience_id}")
+        print(f"   status: {experience.status.value}")
+        print(f"   diagnosed_error_type: {experience.diagnosed_error_type.value}")
+        print(f"   diagnosed_keywords: [{', '.join(experience.diagnosed_keywords)}]")
+        print(f"   error_fingerprint: {experience.error_fingerprint}")
+        print(f"   verified_count: {experience.verified_count}")
+        print(f"   failed_count: {experience.failed_count}")
+
+
+def run_memory_consolidate() -> None:
+    _, proposal_path, counts = MemoryConsolidator().consolidate()
+    print("Memory consolidation finished")
+    for name in (
+        "scanned", "merged", "marked_conflicted", "marked_deprecated", "updated", "kept"
+    ):
+        print(f"{name}: {counts[name]}")
+    print(f"proposal_path: {proposal_path}")
+
 def _not_implemented(command: str) -> None:
     raise SystemExit(f"{command} is not implemented in M1.")
 
@@ -90,8 +124,10 @@ def main() -> None:
             run_mock_upstream_event(args.scenario)
         elif args.command == "inspect":
             _not_implemented("inspect")
-        elif args.command == "memory":
-            _not_implemented(f"memory {args.memory_command}")
+        elif args.command == "memory" and args.memory_command == "list":
+            run_memory_list(args.error_type, args.keyword)
+        elif args.command == "memory" and args.memory_command == "consolidate":
+            run_memory_consolidate()
     except (OSError, ValueError, ValidationError) as error:
         raise SystemExit(str(error)) from error
 
