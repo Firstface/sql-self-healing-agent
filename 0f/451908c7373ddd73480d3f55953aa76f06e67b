@@ -1,0 +1,35 @@
+.gitignore
+  s_4728c1d512fe5c::t_13d1ce88ec9fcd 69-72
+  s_f082554eedd98e::t_c2c75a828aa699 68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "0f451908c7373ddd73480d3f55953aa76f06e67b",
+  "prompts": {},
+  "humans": {
+    "h_eaa3f7515dcca4": {
+      "author": "liweiyi.1391157 <liweiyi.1391157@bytedance.com>"
+    }
+  },
+  "sessions": {
+    "s_4728c1d512fe5c": {
+      "agent_id": {
+        "tool": "trae-cue",
+        "id": "ai_tab-202607162111566A525740BA8FF5377FF0",
+        "model": "default"
+      },
+      "human_author": "liweiyi.1391157 <liweiyi.1391157@bytedance.com>"
+    },
+    "s_f082554eedd98e": {
+      "agent_id": {
+        "tool": "trae-cue",
+        "id": "ai_tab-icr-13e5a2bf-d969-4f6a-8513-eb9a58c6c626",
+        "model": "default"
+      },
+      "human_author": "liweiyi.1391157 <liweiyi.1391157@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
