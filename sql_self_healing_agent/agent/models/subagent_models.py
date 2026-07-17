@@ -22,6 +22,23 @@ class SubAgentLimits(StrictModel):
         return self
 
 
+class SubAgentBudget(StrictModel):
+    max_steps: int = Field(default=10, ge=1, le=10)
+    max_tool_calls: int = Field(default=3, ge=0, le=3)
+    max_wall_time_ms: int = Field(default=30000, ge=1, le=30000)
+    max_context_requests: int = Field(default=1, ge=0, le=1)
+    step_count: int = Field(default=0, ge=0)
+    tool_call_count: int = Field(default=0, ge=0)
+    context_request_count: int = Field(default=0, ge=0)
+
+    def exceeded(self) -> bool:
+        return (
+            self.step_count >= self.max_steps
+            or self.tool_call_count > self.max_tool_calls
+            or self.context_request_count > self.max_context_requests
+        )
+
+
 class SubAgentRequest(StrictModel):
     task_name: str
     objective: str

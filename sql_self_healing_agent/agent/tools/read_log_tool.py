@@ -4,6 +4,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from sql_self_healing_agent.agent.models.context import AgentContext
+from sql_self_healing_agent.artifacts.artifact_store import ArtifactStore
+from sql_self_healing_agent.logs.log_compressor import LogCompressor
 
 
 class ReadLogInput(BaseModel):
@@ -29,16 +31,37 @@ class ReadLogTool:
     max_output_tokens = 1000
     produces_artifact = False
 
+    def __init__(
+        self,
+        artifact_store: ArtifactStore | None = None,
+        keyword_vocab: dict[str, list[str]] | None = None,
+    ) -> None:
+        self.artifact_store = artifact_store or ArtifactStore()
+        self.keyword_vocab = keyword_vocab or {}
+        self.compressor = LogCompressor()
+
     def run(self, context: AgentContext, input_data: ReadLogInput) -> ReadLogOutput:
         if input_data.log_path != context.log_path:
             return ReadLogOutput(status="FAILED", error_code="LOG_PATH_FORBIDDEN")
-        path = Path(input_data.log_path)
-        if not path.exists():
+        if not Path(input_data.log_path).exists():
             return ReadLogOutput(status="MISSING", error_code="LOG_NOT_FOUND")
-        try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
+        digest = self.compressor.build_digest(
+            input_data.log_path,
+            context.error_message,
+            self.keyword_vocab,
+        )
+        if not digest.log_readable:
             return ReadLogOutput(status="FAILED", error_code="LOG_READ_FAILED")
-        selected = lines[: input_data.max_lines or 200]
-        summary = " | ".join(line[:300] for line in selected[-20:])[:4000]
-        return ReadLogOutput(status="AVAILABLE", summary=summary)
+        ref = self.artifact_store.save_json_ref(
+            context.session_id,
+            context.attempt_id,
+            "read_log_digest.json",
+            digest.model_dump(mode="json"),
+            "LOG_DIGEST",
+        )
+        summary = digest.root_cause_summary or digest.suspected_engine_error or "log digest available"
+        return ReadLogOutput(
+            status="AVAILABLE",
+            summary=summary[:4000],
+            log_digest_ref=ref.model_dump_json(),
+        )

@@ -38,3 +38,22 @@ class SubAgentTest(unittest.TestCase):
         request = SubAgentRequest(task_name="diagnose_sql_error", objective="x", context_refs=["artifact://other/x"], expected_output_schema="x")
         result = SubAgentRunner(lambda request, view: SubAgentResult(status="SUCCEEDED", summary="ok")).run(request, context())
         self.assertEqual(result.status, "HUMAN_REQUIRED")
+
+
+    def test_mini_loop_context_request_is_limited(self) -> None:
+        calls=[]
+        def worker(request, view):
+            calls.append(view)
+            return {"type":"NEED_MORE_CONTEXT","requested_context_refs":[]}
+        request=SubAgentRequest(task_name="diagnose_sql_error",objective="x",expected_output_schema="x")
+        result=SubAgentRunner(worker).run(request,context())
+        self.assertEqual(result.status,"BUDGET_EXCEEDED")
+        self.assertEqual(result.stop_reason,"MAX_CONTEXT_REQUESTS")
+        self.assertEqual(len(calls),2)
+
+    def test_mini_loop_rejects_unallowed_tool(self) -> None:
+        def worker(request, view):
+            return {"type":"CALL_ALLOWED_TOOL","tool_name":"ExecuteSQLTool"}
+        request=SubAgentRequest(task_name="diagnose_sql_error",objective="x",expected_output_schema="x")
+        result=SubAgentRunner(worker).run(request,context())
+        self.assertEqual(result.status,"HUMAN_REQUIRED")

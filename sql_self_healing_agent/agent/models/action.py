@@ -3,13 +3,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from sql_self_healing_agent.agent.models.execution_plan import ExecutionPlan
-
-
-class SubAgentRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    role: str
-    task: str
-    context_keys: list[str]
+from sql_self_healing_agent.agent.models.subagent_models import SubAgentRequest
 
 
 class AgentAction(BaseModel):

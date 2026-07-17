@@ -14,7 +14,8 @@ SQL Self-Healing Agent 是一个事件驱动的 SQL 修复组件。
 - [x] HookManager、预算、安全、Trace 和受控重试（`4252026`）
 - [x] 生产 LLM 统一 Hook 治理、RunState 预算记账与 Gate v2 Operation 闭环（`52d653c`）
 - [x] 在线 ToolRegistry 与 ContextManager 接线、ContextSnapshot 持久化（`25de1c2`）
-- [x] CandidateCommitter 唯一提交、AgentConfig 交叉校验与 PROCESSING 恢复（当前阶段）
+- [x] CandidateCommitter 唯一提交、AgentConfig 交叉校验与 PROCESSING 恢复（`c1b3222`）
+- [x] ReadLogTool 日志管道复用、SubAgent Request/独立预算/mini-loop 收敛（当前阶段）
 - [x] 新 FAILED/SUCCESS 在线主链接入 AgentRunner（`c5f8736`）
 - [x] 删除旧固定 Workflow 在线入口并完成最终收敛（当前阶段）
 
@@ -51,6 +52,7 @@ SQL Self-Healing Agent 是一个事件驱动的 SQL 修复组件。
 - Diagnosis、SQLGenerator、Pre/PostReflection 的生产 LLM 调用统一经 LLMAdapter；每个 AgentRun 独立 HookManager，并将 LLM 次数写入 AgentRunState
 - FAILED 在线入口由 AgentRunner 按证据动态选择 Action；候选统一进入三层 Gate，旧固定 Workflow 已移出在线入口
 - 在线业务步骤统一由 ToolRegistry 执行白名单、Schema 和 phase 校验；ContextManager 提供受控 MainAgent 视图、确定性裁剪与 Snapshot
+- ReadLogTool 复用日志压缩与脱敏管道并产出 LogDigest Artifact；SubAgent 使用统一请求模型、独立预算和受限 mini-loop
 - SUCCESS 仅匹配 Session 当前候选，确认后写 Frontmatter Memory；重复事件和写失败恢复保持幂等
 - 候选仅由 CandidateCommitter 校验 Gate 决策、hash、Artifact 归属与脱敏后提交；PROCESSING 可安全恢复或明确落 SYSTEM_ERROR
 - 所有 `AgentExternalResult` 统一由 `ExternalResultFactory` 构造；Provider 必须显式配置，LLMClient 无隐式重试

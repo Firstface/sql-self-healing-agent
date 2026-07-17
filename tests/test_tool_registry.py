@@ -43,3 +43,20 @@ class ToolRegistryTest(unittest.TestCase):
         tool.name = "WriteMemoryTool"
         with self.assertRaises(ValueError):
             ToolRegistry().register(tool)
+
+
+class ReadLogPipelineTest(unittest.TestCase):
+    def test_read_log_uses_pipeline_and_returns_digest_ref(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from sql_self_healing_agent.agent.tools.read_log_tool import ReadLogInput, ReadLogTool
+        from sql_self_healing_agent.artifacts.artifact_store import ArtifactStore
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); log=root/"task.log"
+            log.write_text("Authorization: Bearer secret\nSemanticException: Invalid column reference pay_amt\n")
+            ctx=context().model_copy(update={"session_id":"s","attempt_id":"a","log_path":str(log),"error_message":"failed"})
+            output=ReadLogTool(ArtifactStore(root),{"COLUMN_NOT_FOUND":["invalid column"]}).run(ctx,ReadLogInput(log_path=str(log)))
+            self.assertEqual(output.status,"AVAILABLE")
+            self.assertTrue(output.log_digest_ref)
+            serialized=(root/"s/attempts/a/artifacts/read_log_digest.json").read_text()
+            self.assertNotIn("Bearer secret",serialized)
