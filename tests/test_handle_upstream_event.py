@@ -24,8 +24,10 @@ class HandleUpstreamEventTest(unittest.TestCase):
             self.assertEqual(result.sql, "SELECT user_id, payment_amount FROM dwd_order_detail WHERE date = ")
             self.assertEqual(service.handle_upstream_event(event), result)
             session_dir = root / "sessions/sess_task_123"
-            required = {"log_digest.json", "diagnosis.json", "metadata_snapshot.json", "memory_retrieval.json", "repair_plan.json", "sql_candidate.sql", "validation_result.json", "pre_reflection_result.json"}
-            self.assertTrue(required.issubset({path.name for path in (session_dir / "artifacts/attempt_001").iterdir()}))
+            required = {"log_digest.json", "diagnosis.json", "metadata_snapshot.json", "memory_retrieval.json", "candidate_v1.sql"}
+            artifact_dir = session_dir / "attempts/attempt_001/artifacts"
+            self.assertTrue(required.issubset({path.name for path in artifact_dir.iterdir()}))
+            self.assertTrue((session_dir / "artifacts/attempt_001/agent_run_state.json").exists())
             service.handle_upstream_event(event)
             session = json.loads((session_dir / "session.json").read_text())
             self.assertEqual(session["attempt_ids"], ["attempt_001"])
@@ -124,10 +126,9 @@ class RegenerationFlowTest(unittest.TestCase):
             self.assertEqual(result.status, "SQL_READY")
             self.assertEqual(client.generation_calls, 2)
             self.assertEqual(client.reflection_calls, 2)
-            artifact_dir = root / "sessions/sess_task_regenerate/artifacts/attempt_001"
-            self.assertTrue((artifact_dir / "sql_regeneration_result.json").exists())
-            validation = json.loads((artifact_dir / "validation_result.json").read_text())
-            self.assertTrue(validation["allow_return_sql"])
+            artifact_dir = root / "sessions/sess_task_regenerate/attempts/attempt_001/artifacts"
+            self.assertTrue((artifact_dir / "candidate_v1.sql").exists())
+            self.assertTrue((artifact_dir / "candidate_v2.sql").exists())
 
 
 class InsertCandidateClient(FakeLLMClient):

@@ -4,15 +4,17 @@ from sql_self_healing_agent.core.time_utils import utc_now_iso
 _RISK_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "BLOCKED": 3}
 
 
-def aggregate_results(*results: GateResult) -> GateResult:
+def aggregate_results(*results: GateResult, allow_medium_risk: bool = False) -> GateResult:
     if not results:
         raise ValueError("at least one GateResult is required")
     risk = max((item.risk_level for item in results), key=_RISK_ORDER.__getitem__)
     decisions = {item.decision for item in results}
     if risk == "BLOCKED" or "REJECT" in decisions:
         decision = "REJECT"
-    elif risk in {"HIGH", "MEDIUM"} or "HUMAN_REQUIRED" in decisions:
+    elif risk == "HIGH" or "HUMAN_REQUIRED" in decisions:
         decision = "HUMAN_REQUIRED"
+    elif risk == "MEDIUM":
+        decision = "PASS_WITH_WARNING" if allow_medium_risk else "HUMAN_REQUIRED"
     elif "PASS_WITH_WARNING" in decisions:
         decision = "PASS_WITH_WARNING"
     else:

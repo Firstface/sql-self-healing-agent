@@ -28,15 +28,17 @@ class SemanticPreReflectionGate:
         if reflection.decision is PreReflectionDecision.RETURN_SQL and risk == "LOW":
             decision = "PASS"
         elif reflection.decision is PreReflectionDecision.RETURN_SQL and risk == "MEDIUM":
-            decision = "HUMAN_REQUIRED"
+            decision = "PASS_WITH_WARNING" if request.allow_medium_risk else "HUMAN_REQUIRED"
+        elif reflection.decision is PreReflectionDecision.REGENERATE:
+            decision = "REJECT"
         elif reflection.decision is PreReflectionDecision.MANUAL_REQUIRED or risk in {"HIGH", "MEDIUM"}:
             decision = "HUMAN_REQUIRED"
         else:
             decision = "REJECT"
         return result(
             "SemanticPreReflectionGate", request.candidate_sql, decision, risk,
-            code=None if decision == "PASS" else "SEMANTIC_REFLECTION_BLOCKED",
-            message=None if decision == "PASS" else "; ".join(reflection.reasons) or "PreReflection 未放行候选。",
+            code=None if decision == "PASS" else "SEMANTIC_REGENERATE" if reflection.decision is PreReflectionDecision.REGENERATE else "SEMANTIC_REFLECTION_BLOCKED",
+            message=None if decision == "PASS" else reflection.regeneration_instruction if reflection.decision is PreReflectionDecision.REGENERATE else "; ".join(reflection.reasons) or "PreReflection 未放行候选。",
             failed=reflection.violated_constraints,
             checked=["FOLLOWS_REPAIR_PLAN", "MINIMAL_CHANGE", "SEMANTIC_RISK"],
         )

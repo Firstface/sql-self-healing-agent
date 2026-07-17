@@ -46,6 +46,7 @@ class GateRequest(StrictModel):
     candidate_artifact_ref: str | None = None
     attempt_id: str
     event_key: str
+    allow_medium_risk: bool = False
 
 
 class StaticGateOutcome(StrictModel):

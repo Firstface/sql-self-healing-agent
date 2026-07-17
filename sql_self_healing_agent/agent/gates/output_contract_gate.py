@@ -4,7 +4,12 @@ from sql_self_healing_agent.agent.gates.gate_utils import candidate_hash, result
 
 class OutputContractGate:
     def run(self, request: GateRequest, previous_results: list[GateResult]) -> GateResult:
-        blockers = [item for item in previous_results if item.decision in {"REJECT", "HUMAN_REQUIRED"} or item.risk_level in {"HIGH", "BLOCKED", "MEDIUM"}]
+        blockers = [
+            item for item in previous_results
+            if item.decision in {"REJECT", "HUMAN_REQUIRED"}
+            or item.risk_level in {"HIGH", "BLOCKED"}
+            or (item.risk_level == "MEDIUM" and not request.allow_medium_risk)
+        ]
         if blockers:
             return result("OutputContractGate", request.candidate_sql, "HUMAN_REQUIRED", "HIGH", code="PRIOR_GATE_NOT_PASS", message="前置 Gate 未全部通过。", failed=["ALL_PRIOR_GATES_PASS"])
         if not request.candidate_sql.strip() or any(item.candidate_hash != candidate_hash(request.candidate_sql) for item in previous_results):

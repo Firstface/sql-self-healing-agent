@@ -16,12 +16,15 @@ class StaticValidationGate:
             diff = self.diff_builder.build(request.original_sql, request.candidate_sql, plan)
         except Exception:
             return StaticGateOutcome(result=result("StaticValidationGate", request.candidate_sql, "HUMAN_REQUIRED", "HIGH", code="PLAN_OR_DIFF_UNAVAILABLE", message="无法为候选构造合法 RepairPlan 或 SQLDiffSummary。", failed=["PLAN_AND_DIFF_AVAILABLE"]))
-        validation = self.validator.validate(request.original_sql, request.candidate_sql, plan, diff)
+        validator = Validator(allow_medium_risk=True) if request.allow_medium_risk else self.validator
+        validation = validator.validate(request.original_sql, request.candidate_sql, plan, diff)
         checked = ["REPAIR_PLAN_BOUNDARY", "SQL_DIFF_BOUNDARY", "VALIDATOR_RED_LINES"]
         if validation.risk_level.value == "BLOCKED":
             decision = "REJECT"
-        elif validation.risk_level.value in {"HIGH", "MEDIUM"}:
+        elif validation.risk_level.value == "HIGH":
             decision = "HUMAN_REQUIRED"
+        elif validation.risk_level.value == "MEDIUM":
+            decision = "PASS_WITH_WARNING" if request.allow_medium_risk and validation.allow_return_sql else "HUMAN_REQUIRED"
         elif not validation.allow_return_sql or not validation.passed:
             decision = "REJECT"
         else:

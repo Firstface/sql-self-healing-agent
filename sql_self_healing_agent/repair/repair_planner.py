@@ -76,39 +76,27 @@ class RepairPlanner:
     def _matching_memory_ids(
         planner_input: RepairPlannerInput, planned_replacement: str
     ) -> list[str]:
-        if planner_input.memory_retrieval is None or planner_input.metadata_snapshot is None:
+        memory = planner_input.memory_retrieval
+        if memory is None or planner_input.metadata_snapshot is None:
             return []
         diagnosis = planner_input.diagnosis
+        replacement = planned_replacement.casefold()
+        entity = (diagnosis.primary_entity or "").casefold()
         current_columns = {
             column.name.casefold()
             for table in planner_input.metadata_snapshot.tables
             for column in table.columns
         }
+        if diagnosis.diagnosed_error_type is DiagnosedErrorType.COLUMN_NOT_FOUND and replacement not in current_columns:
+            return []
         matched: list[str] = []
-        for retrieved in planner_input.memory_retrieval.retrieved:
-            experience = retrieved.experience
-            if experience.diagnosed_error_type is not diagnosis.diagnosed_error_type:
+        for experience in memory.matched_experiences:
+            description = experience.description.casefold()
+            if replacement not in description or (entity and entity not in description):
                 continue
-            for step in experience.repair_steps:
-                if (
-                    diagnosis.primary_entity
-                    and step.before_fragment
-                    and step.before_fragment.casefold() != diagnosis.primary_entity.casefold()
-                ):
-                    continue
-                if (
-                    not step.after_fragment
-                    or step.after_fragment.casefold() != planned_replacement.casefold()
-                ):
-                    continue
-                if diagnosis.diagnosed_error_type is DiagnosedErrorType.COLUMN_NOT_FOUND:
-                    if step.after_fragment.casefold() in current_columns:
-                        matched.append(experience.experience_id)
-                        break
-                elif diagnosis.diagnosed_error_type is DiagnosedErrorType.TYPE_MISMATCH:
-                    if "cast(" in step.after_fragment.casefold():
-                        matched.append(experience.experience_id)
-                        break
+            if not set(experience.matched_by).intersection(diagnosis.diagnosed_keywords):
+                continue
+            matched.append(experience.experience_id)
         return list(dict.fromkeys(matched))
 
     @staticmethod

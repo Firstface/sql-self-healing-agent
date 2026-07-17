@@ -42,7 +42,7 @@ class MockUpstreamEventRunnerTest(unittest.TestCase):
             self.assertEqual(first_attempt["status"], "UPSTREAM_FAILED")
             self.assertEqual(second_attempt["status"], "UPSTREAM_CONFIRMED_SUCCESS")
             self.assertEqual(second_attempt["previous_attempt_id"], "attempt_001")
-            post = json.loads((session_dir / "artifacts/attempt_002/post_reflection_result.json").read_text())
+            post = json.loads((session_dir / "attempts/attempt_002/artifacts/post_reflection_result.json").read_text())
             self.assertEqual(post["status"], "FAILED_BUT_PROGRESSING")
             experiences = list((root / ".memory/experiences").glob("*.md"))
             self.assertEqual(len(experiences), 1)

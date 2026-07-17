@@ -31,7 +31,7 @@ class GateRunner:
             return semantic
         self.execution_order.append("OutputContractGate")
         output = self.output_gate.run(request, [static.result, semantic])
-        aggregated = aggregate_results(static.result, semantic, output)
+        aggregated = aggregate_results(static.result, semantic, output, allow_medium_risk=request.allow_medium_risk)
         self.last_result = aggregated
         return aggregated
 
@@ -51,7 +51,7 @@ class GateRunner:
             return AgentRunResult(status="HUMAN_REQUIRED", reason="GATE_REQUEST_MISSING", stop_reason=run_state.stop_reason, plan_revision=context.execution_plan.revision, step_count=run_state.step_count)
         result = self.run_request(request)
         context.candidate.gate_feedback.extend(CandidateGateFeedback(gate_name=item.gate_name, decision="PASS" if item.severity in {"INFO", "WARNING"} else "REJECT" if item.severity == "BLOCK" else "HUMAN_REQUIRED", reason=item.message) for item in result.feedback)
-        if result.decision == "PASS":
+        if result.decision == "PASS" or (result.decision == "PASS_WITH_WARNING" and request.allow_medium_risk):
             context.candidate.formal_sql = context.candidate.draft_sql
             context.candidate.status = "READY"
             run_state.status = "SUCCEEDED"
