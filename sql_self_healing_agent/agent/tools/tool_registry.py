@@ -8,7 +8,10 @@ from sql_self_healing_agent.core.time_utils import utc_now_iso
 
 
 class ToolRegistry:
-    ALLOWED_NAMES = {"ReadLogTool", "MetadataQueryTool", "MemoryRetrieveTool", "ReadArtifactTool", "RunSubAgentTool"}
+    ALLOWED_NAMES = {
+        "ReadLogTool", "DiagnoseTool", "MetadataQueryTool", "MemoryRetrieveTool",
+        "BuildRepairPlanTool", "GenerateCandidateTool", "ReadArtifactTool", "RunSubAgentTool",
+    }
     FORBIDDEN_NAMES = {"ExecuteSQLTool", "WriteSessionTool", "WriteMemoryTool", "BypassGateTool", "KnowledgeRetrieveTool", "TodoWriteTool"}
 
     def __init__(self) -> None:

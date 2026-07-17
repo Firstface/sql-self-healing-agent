@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from sql_self_healing_agent.artifacts.artifact_store import ArtifactStore
@@ -24,10 +25,22 @@ class AgenticFailedProcessorTest(unittest.TestCase):
             session=store.load_or_create_for_event(event); record=store.create_event_record(session,event); store.append_upstream_event(session,record); attempt=store.create_attempt(session,record)
             vocab=json.loads((ROOT/"sql_self_healing_agent/logs/keyword_vocab.json").read_text())
             deps=ProcessorDependencies(vocab,provider,MemoryRetriever(memory),RepairPlanner(provider),SQLGenerator())
-            result,context,state,executor=AgenticFailedEventProcessor(deps,artifacts).run(event,session,attempt)
+            processor = AgenticFailedEventProcessor(deps,artifacts)
+            from sql_self_healing_agent.agent.tools.tool_registry import ToolRegistry
+            original_execute = ToolRegistry.execute
+            calls = []
+            def tracked_execute(registry, name, context, tool_input, run_state):
+                calls.append(name)
+                return original_execute(registry, name, context, tool_input, run_state)
+            with patch.object(ToolRegistry, "execute", tracked_execute):
+                result,context,state,executor=processor.run(event,session,attempt)
             self.assertEqual(result.status,"CANDIDATE_READY", f"{result=} {state=} observations={context.recent_observations} workspace={context.workspace} objects={executor.objects}")
             self.assertEqual(context.candidate.status,"READY")
             self.assertGreaterEqual(state.step_count,7)
             self.assertEqual([item.action_type for item in context.recent_observations[:-1]],["TOOL_CALL"]*6)
             self.assertIn("repair_plan",executor.objects)
             self.assertTrue(context.candidate.draft_artifact_ref)
+            self.assertEqual(calls, ["ReadLogTool", "DiagnoseTool", "MetadataQueryTool", "MemoryRetrieveTool", "BuildRepairPlanTool", "GenerateCandidateTool"])
+            self.assertGreaterEqual(len(processor.context_manager.snapshots), 2)
+            artifact_names = {path.name for path in (sessions / session.session_id / "attempts" / attempt.attempt_id / "artifacts").iterdir()}
+            self.assertIn("snapshot_0001.json", artifact_names)

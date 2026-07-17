@@ -12,7 +12,8 @@ SQL Self-Healing Agent 是一个事件驱动的 SQL 修复组件。
 - [x] ContextManager、ArtifactRef 与安全压缩（`cdf6861`）
 - [x] Static → Semantic → OutputContract 三层 Gate（`7329309`）
 - [x] HookManager、预算、安全、Trace 和受控重试（`4252026`）
-- [x] 生产 LLM 统一 Hook 治理、RunState 预算记账与 Gate v2 Operation 闭环（当前阶段）
+- [x] 生产 LLM 统一 Hook 治理、RunState 预算记账与 Gate v2 Operation 闭环（`52d653c`）
+- [x] 在线 ToolRegistry 与 ContextManager 接线、ContextSnapshot 持久化（当前阶段）
 - [x] 新 FAILED/SUCCESS 在线主链接入 AgentRunner（`c5f8736`）
 - [x] 删除旧固定 Workflow 在线入口并完成最终收敛（当前阶段）
 
@@ -48,6 +49,7 @@ SQL Self-Healing Agent 是一个事件驱动的 SQL 修复组件。
 - Tool、SubAgent、Gate、LLM 和 Context 摘要统一进入 Operation 生命周期；阻断、失败和超时也产生结束 Trace
 - Diagnosis、SQLGenerator、Pre/PostReflection 的生产 LLM 调用统一经 LLMAdapter；每个 AgentRun 独立 HookManager，并将 LLM 次数写入 AgentRunState
 - FAILED 在线入口由 AgentRunner 按证据动态选择 Action；候选统一进入三层 Gate，旧固定 Workflow 已移出在线入口
+- 在线业务步骤统一由 ToolRegistry 执行白名单、Schema 和 phase 校验；ContextManager 提供受控 MainAgent 视图、确定性裁剪与 Snapshot
 - SUCCESS 仅匹配 Session 当前候选，确认后写 Frontmatter Memory；重复事件和写失败恢复保持幂等
 - 所有 `AgentExternalResult` 统一由 `ExternalResultFactory` 构造；Provider 必须显式配置，LLMClient 无隐式重试
 

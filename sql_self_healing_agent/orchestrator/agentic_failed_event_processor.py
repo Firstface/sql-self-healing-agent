@@ -1,7 +1,11 @@
 import json
 from dataclasses import dataclass
+from typing import Callable
+
+from pydantic import BaseModel, ConfigDict
 from uuid import uuid4
 
+from sql_self_healing_agent.agent.context import ContextManager
 from sql_self_healing_agent.agent.gates.gate_models import GateRequest
 from sql_self_healing_agent.agent.gates.gate_runner import GateRunner
 from sql_self_healing_agent.agent.models.action import AgentAction
@@ -10,6 +14,7 @@ from sql_self_healing_agent.agent.models.observation import Observation
 from sql_self_healing_agent.agent.models.run_state import AgentRunLimits, AgentRunState
 from sql_self_healing_agent.agent.runner.agent_runner import AgentRunner
 from sql_self_healing_agent.agent.runner.agent_result import AgentRunResult
+from sql_self_healing_agent.agent.tools.tool_registry import ToolRegistry
 from sql_self_healing_agent.core.enums import DiagnosedErrorType
 from sql_self_healing_agent.core.time_utils import utc_now_iso
 from sql_self_healing_agent.diagnostics.diagnosis_fusion import DiagnosisFusion
@@ -59,7 +64,44 @@ class ProcessorDependencies:
     allow_medium_risk: bool = False
 
 
+class InternalToolInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class InternalToolOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    summary: str
+    artifact_refs: list[str]
+
+
+class InternalBusinessTool:
+    description = "受控复用现有业务能力"
+    input_model = InternalToolInput
+    output_model = InternalToolOutput
+    allowed_phases = {"INIT", "DIAGNOSING", "PLANNING", "GENERATING"}
+    max_output_tokens = 2000
+    produces_artifact = True
+
+    def __init__(self, name: str, handler: Callable[[AgentContext], list[str]]) -> None:
+        self.name = name
+        self.handler = handler
+
+    def run(self, context: AgentContext, input_data: InternalToolInput) -> InternalToolOutput:
+        keys = self.handler(context)
+        refs = [context.workspace[key].artifact_ref for key in keys if context.workspace[key].artifact_ref]
+        return InternalToolOutput(summary=",".join(keys), artifact_refs=refs)
+
+
 class AgenticActionExecutor:
+    TOOL_NAMES = {
+        "build_log_digest": "ReadLogTool",
+        "diagnose": "DiagnoseTool",
+        "query_metadata": "MetadataQueryTool",
+        "retrieve_memory": "MemoryRetrieveTool",
+        "build_repair_plan": "BuildRepairPlanTool",
+        "generate_candidate": "GenerateCandidateTool",
+    }
+
     def __init__(self, dependencies: ProcessorDependencies, event, artifact_store, hook_manager=None) -> None:
         self.deps = dependencies
         self.event = event
@@ -70,13 +112,7 @@ class AgenticActionExecutor:
         self.fusion = DiagnosisFusion()
         self.table_extractor = SQLTableExtractor()
         self.objects: dict[str, object] = {}
-
-    def execute(self, action: AgentAction, context: AgentContext, run_state: AgentRunState) -> Observation:
-        if action.type == "PROPOSE_SQL_CANDIDATE":
-            summary = action.candidate_sql or ""
-            return self._observation(action, "SUCCEEDED", summary, [])
-        if action.type != "TOOL_CALL" or not action.tool_name:
-            return self._observation(action, "BLOCKED", "unsupported action", [])
+        self.tool_registry = ToolRegistry()
         handlers = {
             "build_log_digest": self._log,
             "diagnose": self._diagnose,
@@ -85,15 +121,31 @@ class AgenticActionExecutor:
             "build_repair_plan": self._plan,
             "generate_candidate": self._generate,
         }
-        handler = handlers.get(action.tool_name)
-        if handler is None:
+        for action_name, handler in handlers.items():
+            self.tool_registry.register(InternalBusinessTool(self.TOOL_NAMES[action_name], handler))
+
+    def execute(self, action: AgentAction, context: AgentContext, run_state: AgentRunState) -> Observation:
+        if action.type == "PROPOSE_SQL_CANDIDATE":
+            summary = action.candidate_sql or ""
+            return self._observation(action, "SUCCEEDED", summary, [])
+        if action.type != "TOOL_CALL" or not action.tool_name:
+            return self._observation(action, "BLOCKED", "unsupported action", [])
+        registry_name = self.TOOL_NAMES.get(action.tool_name)
+        if registry_name is None:
             return self._observation(action, "BLOCKED", "unregistered internal action", [])
-        keys = (
-            self.hook_manager.execute_tool_call(lambda: handler(context), session_id=context.session_id, attempt_id=context.attempt_id, purpose=action.tool_name, input_summary=action.tool_name)
+        result = (
+            self.hook_manager.execute_tool_call(
+                lambda: self.tool_registry.execute(registry_name, context, action.tool_input or {}, run_state),
+                session_id=context.session_id,
+                attempt_id=context.attempt_id,
+                purpose=registry_name,
+                input_summary=registry_name,
+            )
             if self.hook_manager is not None
-            else handler(context)
+            else self.tool_registry.execute(registry_name, context, action.tool_input or {}, run_state)
         )
-        return self._observation(action, "SUCCEEDED", action.tool_name, keys)
+        keys = [key for key in context.workspace if key in self.objects or key == "candidate_sql"]
+        return self._observation(action, result.status, result.summary or registry_name, keys)
 
     def _save(self, context: AgentContext, key: str, value, artifact_type: str) -> str:
         ref = self.artifact_store.save_json_ref(context.session_id, context.attempt_id, f"{key}.json", value.model_dump(mode="json"), artifact_type)
@@ -209,6 +261,7 @@ class OnlineGateAdapter:
 class AgenticFailedEventProcessor:
     def __init__(self, dependencies: ProcessorDependencies, artifact_store, hook_manager=None) -> None:
         self.dependencies=dependencies; self.artifact_store=artifact_store; self.hook_manager=hook_manager
+        self.context_manager = ContextManager(artifact_store)
     def run(self,event,session,attempt) -> tuple[AgentRunResult,AgentContext,AgentRunState,AgenticActionExecutor]:
         from sql_self_healing_agent.agent.models.execution_plan import build_initial_execution_plan
         context=AgentContext(session_id=session.session_id,attempt_id=attempt.attempt_id,event_key=attempt.source_event_key,original_sql=event.sql,error_message=event.error_message,log_path=event.log_path,execution_plan=build_initial_execution_plan())
@@ -222,7 +275,23 @@ class AgenticFailedEventProcessor:
             budget_hooks[0].run_state = state
             budget_hooks[0].limits = limits
         executor=AgenticActionExecutor(self.dependencies,event,self.artifact_store,self.hook_manager)
+        self.context_manager.compact_if_needed(context, state)
+        self.context_manager.prepare_for_main_agent(
+            context,
+            state,
+            available_tools=executor.tool_registry.list_available(context.phase),
+            limits=limits,
+        )
         from sql_self_healing_agent.agent.gates.semantic_pre_reflection_gate import SemanticPreReflectionGate
         gate_runner = GateRunner(semantic_gate=SemanticPreReflectionGate(self.dependencies.evaluator))
         result=AgentRunner(DeterministicMainAgent(),executor,OnlineGateAdapter(gate_runner,executor,self.hook_manager),limits).run(context,state)
+        self.context_manager.compact_if_needed(context, state)
+        for snapshot in self.context_manager.snapshots:
+            self.artifact_store.save_json_ref(
+                context.session_id,
+                context.attempt_id,
+                f"{snapshot.snapshot_id}.json",
+                snapshot.model_dump(mode="json"),
+                "CONTEXT_SNAPSHOT",
+            )
         return result,context,state,executor
