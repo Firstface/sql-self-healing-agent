@@ -1,147 +1,74 @@
+import json
 import os
-import shutil
 import uuid
 from pathlib import Path
 
-from sql_self_healing_agent.core.atomic_io import read_json, write_json_atomic
-from sql_self_healing_agent.core.enums import ExperienceStatus
-from sql_self_healing_agent.core.time_utils import utc_now_iso
-from sql_self_healing_agent.memory.memory_models import (
-    Experience,
-    FingerprintIndex,
-    KeywordIndex,
-)
+from sql_self_healing_agent.core.atomic_io import read_json, write_json_atomic, write_text_atomic
+from sql_self_healing_agent.memory.memory_models import ExperienceFrontmatter
 
 
 class MemoryStore:
-    def __init__(self, base_dir: Path | str = Path("memory_store")) -> None:
+    def __init__(self, base_dir: Path | str = Path(".memory")) -> None:
         self.base_dir = Path(base_dir)
         self.experiences_dir = self.base_dir / "experiences"
-        self.index_dir = self.base_dir / "index"
-        self.keyword_index_dir = self.index_dir / "keyword_index"
-        self.fingerprint_index_dir = self.index_dir / "fingerprint_index"
+        self.index_path = self.base_dir / "index" / "keyword_index.json"
 
-    @staticmethod
-    def _index_filename(value: str) -> str:
-        readable = "".join(
-            character if character.isalnum() or character in "-_" else "_"
-            for character in value
-        ).strip("_")[:160] or "empty"
-        return f"{readable}.json"
+    def experience_path(self, experience_id: str) -> Path:
+        return self.experiences_dir / f"{experience_id}.md"
 
-    def list_experiences(self) -> list[Experience]:
-        if not self.experiences_dir.exists():
-            return []
-        return [
-            Experience.model_validate(read_json(path))
-            for path in sorted(self.experiences_dir.glob("*.json"))
-        ]
+    def list_experience_ids(self) -> list[str]:
+        return [path.stem for path in sorted(self.experiences_dir.glob("*.md"))] if self.experiences_dir.exists() else []
 
-    def get(self, experience_id: str) -> Experience | None:
-        path = self.experiences_dir / f"{experience_id}.json"
-        if not path.exists():
-            return None
-        return Experience.model_validate(read_json(path))
+    def read_frontmatter(self, experience_id: str) -> ExperienceFrontmatter:
+        text = self.experience_path(experience_id).read_text(encoding="utf-8")
+        lines = text.splitlines()
+        if not lines or lines[0] != "---":
+            raise ValueError("missing frontmatter")
+        end = lines.index("---", 1)
+        keywords: list[str] = []
+        description: str | None = None
+        in_keywords = False
+        for line in lines[1:end]:
+            if line == "keyword:":
+                in_keywords = True
+            elif line.startswith("description:"):
+                description = line.split(":", 1)[1].strip()
+                in_keywords = False
+            elif in_keywords and line.strip().startswith("- "):
+                keywords.append(line.strip()[2:].strip())
+            elif line.strip():
+                raise ValueError("unsupported frontmatter field")
+        return ExperienceFrontmatter(keyword=keywords, description=description or "")
 
-    def find_by_source(
-        self, source_session_id: str, source_attempt_id: str
-    ) -> Experience | None:
-        return next(
-            (
-                experience
-                for experience in self.list_experiences()
-                if experience.source_session_id == source_session_id
-                and experience.source_attempt_id == source_attempt_id
-            ),
-            None,
-        )
+    def read_body(self, experience_id: str) -> str:
+        text = self.experience_path(experience_id).read_text(encoding="utf-8")
+        parts = text.split("---", 2)
+        return parts[2].lstrip() if len(parts) == 3 else ""
 
-    def save(self, experience: Experience, rebuild_indices: bool = True) -> None:
-        write_json_atomic(
-            self.experiences_dir / f"{experience.experience_id}.json",
-            experience.model_dump(mode="json"),
-        )
-        if rebuild_indices:
-            self.rebuild_indices()
+    def load_index(self) -> dict[str, list[str]]:
+        if not self.index_path.exists():
+            return {}
+        payload = read_json(self.index_path)
+        return {str(key): list(dict.fromkeys(value)) for key, value in payload.items()}
 
-    def lookup_keyword(self, keyword: str) -> list[str]:
-        path = self.keyword_index_dir / self._index_filename(keyword)
-        if not path.exists():
-            return []
-        index = KeywordIndex.model_validate(read_json(path))
-        return index.experience_ids if index.keyword == keyword else []
+    def rebuild_index(self) -> dict[str, list[str]]:
+        index: dict[str, list[str]] = {}
+        for experience_id in self.list_experience_ids():
+            frontmatter = self.read_frontmatter(experience_id)
+            for keyword in frontmatter.keyword:
+                index.setdefault(keyword, []).append(experience_id)
+        index = {key: sorted(set(value)) for key, value in sorted(index.items())}
+        write_json_atomic(self.index_path, index)
+        return index
 
-    def lookup_fingerprint(self, error_fingerprint: str) -> list[str]:
-        path = self.fingerprint_index_dir / self._index_filename(error_fingerprint)
-        if not path.exists():
-            return []
-        index = FingerprintIndex.model_validate(read_json(path))
-        return index.experience_ids if index.error_fingerprint == error_fingerprint else []
+    def save_markdown(self, experience_id: str, content: str) -> Path:
+        write_text_atomic(self.experience_path(experience_id), content)
+        self.rebuild_index()
+        return self.experience_path(experience_id)
 
-    def record_failure(self, experience_ids: list[str], reason: str) -> None:
-        now = utc_now_iso()
-        changed = False
-        for experience_id in dict.fromkeys(experience_ids):
-            experience = self.get(experience_id)
-            if experience is None:
-                continue
-            experience.failed_count += 1
-            experience.last_failed_reason = reason
-            experience.last_failed_at = now
-            experience.updated_at = now
-            self.save(experience, rebuild_indices=False)
-            changed = True
-        if changed:
-            self.rebuild_indices()
-
-    def rebuild_indices(self) -> None:
-        experiences = [
-            experience
-            for experience in self.list_experiences()
-            if experience.status in {ExperienceStatus.ACTIVE, ExperienceStatus.CONFLICTED}
-        ]
-        keyword_map: dict[str, set[str]] = {}
-        fingerprint_map: dict[str, set[str]] = {}
-        for experience in experiences:
-            for keyword in experience.diagnosed_keywords:
-                keyword_map.setdefault(keyword, set()).add(experience.experience_id)
-            fingerprint_map.setdefault(experience.error_fingerprint, set()).add(
-                experience.experience_id
-            )
-
-        temporary_dir = self.base_dir / f".index_tmp_{uuid.uuid4().hex}"
-        backup_dir = self.base_dir / f".index_backup_{uuid.uuid4().hex}"
-        try:
-            for keyword, experience_ids in keyword_map.items():
-                write_json_atomic(
-                    temporary_dir / "keyword_index" / self._index_filename(keyword),
-                    KeywordIndex(
-                        keyword=keyword, experience_ids=sorted(experience_ids)
-                    ).model_dump(mode="json"),
-                )
-            for fingerprint, experience_ids in fingerprint_map.items():
-                write_json_atomic(
-                    temporary_dir
-                    / "fingerprint_index"
-                    / self._index_filename(fingerprint),
-                    FingerprintIndex(
-                        error_fingerprint=fingerprint,
-                        experience_ids=sorted(experience_ids),
-                    ).model_dump(mode="json"),
-                )
-            (temporary_dir / "keyword_index").mkdir(parents=True, exist_ok=True)
-            (temporary_dir / "fingerprint_index").mkdir(parents=True, exist_ok=True)
-            if self.index_dir.exists():
-                os.replace(self.index_dir, backup_dir)
-            try:
-                os.replace(temporary_dir, self.index_dir)
-            except Exception:
-                if backup_dir.exists() and not self.index_dir.exists():
-                    os.replace(backup_dir, self.index_dir)
-                raise
-            shutil.rmtree(backup_dir, ignore_errors=True)
-        except Exception:
-            shutil.rmtree(temporary_dir, ignore_errors=True)
-            if backup_dir.exists() and not self.index_dir.exists():
-                os.replace(backup_dir, self.index_dir)
-            raise
+    def find_by_logical_key(self, session_id: str, attempt_id: str) -> str | None:
+        marker = f"logical-key: {session_id}:{attempt_id}"
+        for experience_id in self.list_experience_ids():
+            if marker in self.read_body(experience_id):
+                return experience_id
+        return None

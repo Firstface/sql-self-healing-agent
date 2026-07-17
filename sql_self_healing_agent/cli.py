@@ -7,7 +7,6 @@ from pydantic import ValidationError
 from sql_self_healing_agent.core.atomic_io import read_json
 from sql_self_healing_agent.core.models import UpstreamTaskEvent
 from sql_self_healing_agent.llm.llm_client import build_llm_client_from_env
-from sql_self_healing_agent.memory.memory_consolidator import MemoryConsolidator
 from sql_self_healing_agent.memory.memory_store import MemoryStore
 from sql_self_healing_agent.mock_external_system.mock_upstream_event_executor import MockUpstreamEventExecutor
 from sql_self_healing_agent.mock_external_system.mock_upstream_event_runner import MockUpstreamEventRunner
@@ -55,35 +54,20 @@ def run_mock_upstream_event(scenario_path: str) -> None:
 
 
 def run_memory_list(error_type: str | None, keyword: str | None) -> None:
-    experiences = MemoryStore().list_experiences()
-    if error_type:
-        experiences = [
-            item for item in experiences if item.diagnosed_error_type.value == error_type
-        ]
-    if keyword:
-        experiences = [item for item in experiences if keyword in item.diagnosed_keywords]
+    store = MemoryStore()
     print("Experience Memory")
-    if not experiences:
+    count = 0
+    for experience_id in store.list_experience_ids():
+        frontmatter = store.read_frontmatter(experience_id)
+        if keyword and keyword not in frontmatter.keyword:
+            continue
+        count += 1
+        print(f"{count}. {experience_id}")
+        print(f"   keyword: [{', '.join(frontmatter.keyword)}]")
+        print(f"   description: {frontmatter.description}")
+    if count == 0:
         print("(empty)")
-        return
-    for index, experience in enumerate(experiences, start=1):
-        print(f"{index}. {experience.experience_id}")
-        print(f"   status: {experience.status.value}")
-        print(f"   diagnosed_error_type: {experience.diagnosed_error_type.value}")
-        print(f"   diagnosed_keywords: [{', '.join(experience.diagnosed_keywords)}]")
-        print(f"   error_fingerprint: {experience.error_fingerprint}")
-        print(f"   verified_count: {experience.verified_count}")
-        print(f"   failed_count: {experience.failed_count}")
 
-
-def run_memory_consolidate() -> None:
-    _, proposal_path, counts = MemoryConsolidator().consolidate()
-    print("Memory consolidation finished")
-    for name in (
-        "scanned", "merged", "marked_conflicted", "marked_deprecated", "updated", "kept"
-    ):
-        print(f"{name}: {counts[name]}")
-    print(f"proposal_path: {proposal_path}")
 
 def _not_implemented(command: str) -> None:
     raise SystemExit(f"{command} is not implemented in M1.")
@@ -111,7 +95,6 @@ def build_parser() -> argparse.ArgumentParser:
     memory_list_parser = memory_subparsers.add_parser("list")
     memory_list_parser.add_argument("--error-type", required=False)
     memory_list_parser.add_argument("--keyword", required=False)
-    memory_subparsers.add_parser("consolidate")
     return parser
 
 
@@ -126,8 +109,6 @@ def main() -> None:
             _not_implemented("inspect")
         elif args.command == "memory" and args.memory_command == "list":
             run_memory_list(args.error_type, args.keyword)
-        elif args.command == "memory" and args.memory_command == "consolidate":
-            run_memory_consolidate()
     except (OSError, ValueError, ValidationError) as error:
         raise SystemExit(str(error)) from error
 

@@ -26,7 +26,7 @@ class MockUpstreamEventRunnerTest(unittest.TestCase):
                 root / "sessions",
                 metadata_path=PROJECT_ROOT / "mocks/metadata/tables.json",
                 allow_medium_risk=scenario.allow_medium_risk,
-                memory_dir=root / "memory_store",
+                memory_dir=root / ".memory",
             )
             result = MockUpstreamEventRunner(
                 service, MockUpstreamEventExecutor()
@@ -44,7 +44,7 @@ class MockUpstreamEventRunnerTest(unittest.TestCase):
             self.assertEqual(second_attempt["previous_attempt_id"], "attempt_001")
             post = json.loads((session_dir / "artifacts/attempt_002/post_reflection_result.json").read_text())
             self.assertEqual(post["status"], "FAILED_BUT_PROGRESSING")
-            experiences = list((root / "memory_store/experiences").glob("*.json"))
+            experiences = list((root / ".memory/experiences").glob("*.md"))
             self.assertEqual(len(experiences), 1)
 
     def test_mock_upstream_retry_exhausted_writes_no_memory(self) -> None:
@@ -55,14 +55,14 @@ class MockUpstreamEventRunnerTest(unittest.TestCase):
                 root / "sessions",
                 metadata_path=PROJECT_ROOT / "mocks/metadata/tables.json",
                 allow_medium_risk=scenario.allow_medium_risk,
-                memory_dir=root / "memory_store",
+                memory_dir=root / ".memory",
             )
             result = MockUpstreamEventRunner(
                 service, MockUpstreamEventExecutor()
             ).run(scenario)
             self.assertEqual(result.status, "MOCK_RETRY_EXHAUSTED")
             self.assertEqual(result.attempt_count, 3)
-            self.assertFalse((root / "memory_store/experiences").exists())
+            self.assertFalse((root / ".memory/experiences").exists())
             session_dir = root / "sessions" / f"sess_{scenario.task_id}"
             session = json.loads((session_dir / "session.json").read_text())
             self.assertEqual(len(session["attempt_ids"]), 3)

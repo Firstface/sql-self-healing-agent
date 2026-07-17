@@ -46,9 +46,3 @@ class DiagnosedErrorType(str, Enum):
     INFRASTRUCTURE_ERROR = "INFRASTRUCTURE_ERROR"
     DATA_QUALITY_ERROR = "DATA_QUALITY_ERROR"
     UNKNOWN = "UNKNOWN"
-
-
-class ExperienceStatus(str, Enum):
-    ACTIVE = "ACTIVE"
-    DEPRECATED = "DEPRECATED"
-    CONFLICTED = "CONFLICTED"

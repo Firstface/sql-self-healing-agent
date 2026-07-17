@@ -21,26 +21,27 @@ class MemoryWriterTest(unittest.TestCase):
                 root / "sessions",
                 llm_client=FakeLLMClient(),
                 metadata_path=PROJECT_ROOT / "mocks/metadata/tables.json",
-                memory_dir=root / "memory_store",
+                memory_dir=root / ".memory",
             )
             failed = UpstreamTaskEvent(id="task_memory", status="FAILED", sql="SELECT user_id, pay_amt FROM dwd_order_detail WHERE date = ", error_message="failed", log_path=str(log_path))
             ready = service.handle_upstream_event(failed)
             self.assertEqual(ready.status, "SQL_READY")
-            self.assertFalse((root / "memory_store/experiences").exists())
+            self.assertFalse((root / ".memory/experiences").exists())
 
             unmatched = UpstreamTaskEvent(id="task_memory", status="SUCCESS", sql="SELECT 1")
             self.assertEqual(service.handle_upstream_event(unmatched).status, "SUCCESS_ACK")
-            self.assertFalse((root / "memory_store/experiences").exists())
+            self.assertFalse((root / ".memory/experiences").exists())
 
             matched = UpstreamTaskEvent(id="task_memory", status="SUCCESS", sql=ready.sql or "")
             self.assertEqual(service.handle_upstream_event(matched).status, "SUCCESS_ACK")
-            experiences = list((root / "memory_store/experiences").glob("*.json"))
+            experiences = list((root / ".memory/experiences").glob("*.md"))
             self.assertEqual(len(experiences), 1)
-            experience = json.loads(experiences[0].read_text())
-            self.assertEqual(experience["source_attempt_id"], "attempt_001")
-            self.assertEqual(experience["confirmed_sql"], matched.sql)
+            experience = experiences[0].read_text()
+            self.assertIn("logical-key: sess_task_memory:attempt_001", experience)
+            self.assertIn(matched.sql or "", experience)
+            self.assertIn("keyword:", experience)
             self.assertEqual(service.handle_upstream_event(matched).status, "SUCCESS_ACK")
-            self.assertEqual(len(list((root / "memory_store/experiences").glob("*.json"))), 1)
+            self.assertEqual(len(list((root / ".memory/experiences").glob("*.md"))), 1)
 
     def test_memory_write_failure_returns_protocol_result_and_replay_recovers(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -51,7 +52,7 @@ class MemoryWriterTest(unittest.TestCase):
                 root / "sessions",
                 llm_client=FakeLLMClient(),
                 metadata_path=PROJECT_ROOT / "mocks/metadata/tables.json",
-                memory_dir=root / "memory_store",
+                memory_dir=root / ".memory",
             )
             failed = UpstreamTaskEvent(id="task_recover", status="FAILED", sql="SELECT user_id, pay_amt FROM dwd_order_detail WHERE date = ", error_message="failed", log_path=str(log_path))
             ready = service.handle_upstream_event(failed)
@@ -60,11 +61,11 @@ class MemoryWriterTest(unittest.TestCase):
             service.memory_writer.write_success_experience = lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disk fail"))
             first = service.handle_upstream_event(success)
             self.assertEqual(first.status, "HUMAN_REQUIRED")
-            self.assertFalse((root / "memory_store/experiences").exists())
+            self.assertFalse((root / ".memory/experiences").exists())
             service.memory_writer.write_success_experience = original
             replay = service.handle_upstream_event(success)
             self.assertEqual(replay.status, "SUCCESS_ACK")
-            self.assertEqual(len(list((root / "memory_store/experiences").glob("*.json"))), 1)
+            self.assertEqual(len(list((root / ".memory/experiences").glob("*.md"))), 1)
 
     def test_duplicate_success_does_not_append_business_trace(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -75,7 +76,7 @@ class MemoryWriterTest(unittest.TestCase):
                 root / "sessions",
                 llm_client=FakeLLMClient(),
                 metadata_path=PROJECT_ROOT / "mocks/metadata/tables.json",
-                memory_dir=root / "memory_store",
+                memory_dir=root / ".memory",
             )
             failed = UpstreamTaskEvent(id="task_trace", status="FAILED", sql="SELECT user_id, pay_amt FROM dwd_order_detail WHERE date = ", error_message="failed", log_path=str(log_path))
             ready = service.handle_upstream_event(failed)
@@ -93,7 +94,7 @@ class MemoryWriterTest(unittest.TestCase):
                 root / "sessions",
                 llm_client=FakeLLMClient(),
                 metadata_path=PROJECT_ROOT / "mocks/metadata/tables.json",
-                memory_dir=root / "memory_store",
+                memory_dir=root / ".memory",
             )
             success = UpstreamTaskEvent(id="task_unmatched_trace", status="SUCCESS", sql="SELECT 1")
             service.handle_upstream_event(success)
@@ -109,7 +110,7 @@ class MemoryWriterTest(unittest.TestCase):
                 root / "sessions",
                 llm_client=FakeLLMClient(),
                 metadata_path=PROJECT_ROOT / "mocks/metadata/tables.json",
-                memory_dir=root / "memory_store",
+                memory_dir=root / ".memory",
             )
             service._handle_success_event = lambda event: (_ for _ in ()).throw(OSError("unexpected"))
             result = service.handle_upstream_event(

@@ -30,9 +30,9 @@ SQL Self-Healing Agent 是一个事件驱动的 SQL 修复组件。
 - 仅在匹配 SUCCESS 后写入最小 Experience，按 Session + Attempt 幂等
 - Memory 写入失败保持结构化外部响应，重复 SUCCESS 可补齐幂等写入
 - 错误振荡在所有诊断类型进入 Planner 前统一转人工
-- Memory keyword/fingerprint 双索引、启发式 Top-K 检索与 Planner 引用
-- Memory 失败反馈统计、手动 consolidate proposal 和索引原子重建
-- memory list / memory consolidate CLI
+- Memory Frontmatter Markdown、keyword-only 多关键词索引与 unknown 全量扫描
+- 仅当前候选被 SUCCESS 完全确认后写入成功经验
+- `memory list` CLI；不再保留旧 fingerprint 与 consolidation
 
 Validation 会阻断危险语句、写类型引入、WHERE 弱化、JOIN 条件变化、GROUP BY 粒度变化、INSERT 目标或静态分区变化，以及 RepairPlan 之外的修改。写类型 SQL 无法可靠确认时 fail-closed。
 
@@ -188,21 +188,12 @@ external_result.json
 
 ## Memory 检索与整理
 
-查看全部或过滤后的成功经验：
+运行时 Memory 统一存放在 `.memory/`：经验为 Frontmatter Markdown，Frontmatter 只包含 `keyword` 列表和 `description`；索引只保留 `keyword_index.json`。`unknown` 会扫描全部 Frontmatter，未命中正文不会进入最终 Context。旧 JSON 经验、fingerprint 索引、失败经验和 consolidation 已删除。
 
 ```bash
 sql-heal memory list
-sql-heal memory list --error-type COLUMN_NOT_FOUND
 sql-heal memory list --keyword column_not_found
 ```
-
-手动生成整理 Proposal 并原子重建双索引：
-
-```bash
-sql-heal memory consolidate
-```
-
-MemoryRetriever 先查 fingerprint 精确索引，再查 keyword 倒排索引，结合错误类型、关键词、SQL 相似度、元数据、验证/失败次数和冲突状态进行固定启发式排序。Memory 只为 RepairPlanner 提供历史佐证；当前诊断与当前 Metadata 始终优先。整理命令只生成 MERGE / MARK_CONFLICT / MARK_DEPRECATED / UPDATE_CARD / KEEP Proposal，不允许直接删除 Experience，也不会自动新增关键词。
 
 ## 测试与验收
 

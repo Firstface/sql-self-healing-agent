@@ -37,7 +37,7 @@ from sql_self_healing_agent.trace.trace_writer import TraceWriter
 
 
 class RepairAgentService:
-    def __init__(self, sessions_dir: Path | str = Path(".sessions"), llm_client: LLMClient | None = None, metadata_path: Path | str = Path("mocks/metadata/tables.json"), keyword_vocab_path: Path | str | None = None, allow_medium_risk: bool = False, memory_dir: Path | str = Path("memory_store")) -> None:
+    def __init__(self, sessions_dir: Path | str = Path(".sessions"), llm_client: LLMClient | None = None, metadata_path: Path | str = Path("mocks/metadata/tables.json"), keyword_vocab_path: Path | str | None = None, allow_medium_risk: bool = False, memory_dir: Path | str = Path(".memory")) -> None:
         self.session_store = SessionStore(sessions_dir)
         self.trace_writer = TraceWriter(sessions_dir)
         self.artifact_store = ArtifactStore(sessions_dir)
@@ -205,11 +205,6 @@ class RepairAgentService:
                     attempt.post_reflection_result_path = self.artifact_store.save_json(session.session_id, attempt.attempt_id, "post_reflection_result.json", post_reflection.model_dump(mode="json"))
                     self.session_store.save_attempt(session, attempt)
                     self.trace_writer.emit(session.session_id, "post_reflection_finished", "post_reflection", {"status": post_reflection.status.value}, attempt.attempt_id)
-                    if previous_plan.referenced_experience_ids:
-                        self.memory_writer.store.record_failure(
-                            previous_plan.referenced_experience_ids,
-                            "; ".join(post_reflection.reasons),
-                        )
 
             extraction = self.table_extractor.extract(event.sql)
             tables, missing, provider_errors = [], [], []
@@ -225,12 +220,12 @@ class RepairAgentService:
             snapshot = MetadataSnapshot(extraction_result=extraction, tables=tables, missing_tables=missing, provider_errors=provider_errors, created_at=utc_now_iso())
             attempt.metadata_snapshot_path = self.artifact_store.save_json(session.session_id, attempt.attempt_id, "metadata_snapshot.json", snapshot.model_dump(mode="json"))
             self.trace_writer.emit(session.session_id, "memory_retrieval_started", "memory", {}, attempt.attempt_id)
-            memory = self.memory_retriever.retrieve(diagnosis, event.sql, snapshot)
+            memory = self.memory_retriever.retrieve_keywords(diagnosis.diagnosed_keywords, diagnosis.root_cause_summary)
             attempt.memory_retrieval_path = self.artifact_store.save_json(session.session_id, attempt.attempt_id, "memory_retrieval.json", memory.model_dump(mode="json"))
-            self.trace_writer.emit(session.session_id, "memory_retrieval_finished", "memory", {"retrieved_count": len(memory.retrieved)}, attempt.attempt_id)
+            self.trace_writer.emit(session.session_id, "memory_retrieval_finished", "memory", {"retrieved_count": len(memory.matched_experiences)}, attempt.attempt_id)
 
             self.trace_writer.emit(session.session_id, "repair_plan_started", "repair_plan", {}, attempt.attempt_id)
-            plan = self.repair_planner.plan(RepairPlannerInput(failed_sql=event.sql, diagnosis=diagnosis, log_digest=log_digest, metadata_snapshot=snapshot, memory_retrieval=memory, post_reflection_result=post_reflection.model_dump(mode="json") if post_reflection else None))
+            plan = self.repair_planner.plan(RepairPlannerInput(failed_sql=event.sql, diagnosis=diagnosis, log_digest=log_digest, metadata_snapshot=snapshot, memory_retrieval=None, post_reflection_result=post_reflection.model_dump(mode="json") if post_reflection else None))
             attempt.repair_plan_path = self.artifact_store.save_json(session.session_id, attempt.attempt_id, "repair_plan.json", plan.model_dump(mode="json"))
             attempt.status = AttemptStatus.PLANNED
             self.session_store.save_attempt(session, attempt)
@@ -249,7 +244,7 @@ class RepairAgentService:
                 current_validation = self.validator.validate(event.sql, current_generation.sql_candidate, plan, current_diff)
                 current_reflection = None
                 if current_validation.allow_return_sql:
-                    current_reflection = self.evaluator.pre_reflect(PreReflectionInput(failed_sql=event.sql, sql_candidate=current_generation.sql_candidate, diagnosis=diagnosis, repair_plan=plan, validation_result=current_validation, sql_diff_summary=current_diff, metadata_snapshot=snapshot, memory_retrieval=memory))
+                    current_reflection = self.evaluator.pre_reflect(PreReflectionInput(failed_sql=event.sql, sql_candidate=current_generation.sql_candidate, diagnosis=diagnosis, repair_plan=plan, validation_result=current_validation, sql_diff_summary=current_diff, metadata_snapshot=snapshot, memory_retrieval=None))
                 return current_diff, current_validation, current_reflection
 
             diff, validation, reflection = validate_and_reflect(generation)
@@ -411,10 +406,10 @@ class RepairAgentService:
             metadata = self._load_attempt_artifact(matched_attempt.metadata_snapshot_path, MetadataSnapshot)
             repair_plan = self._load_attempt_artifact(matched_attempt.repair_plan_path, RepairPlan)
             self.trace_writer.emit(session.session_id, "memory_write_started", "memory", {}, matched_attempt.attempt_id)
-            experience = self.memory_writer.write_success_experience(
+            experience_id = self.memory_writer.write_success_experience(
                 session, matched_attempt, current_sql, metadata, repair_plan
             )
-            self.trace_writer.emit(session.session_id, "memory_write_finished", "memory", {"experience_id": experience.experience_id}, matched_attempt.attempt_id)
+            self.trace_writer.emit(session.session_id, "memory_write_finished", "memory", {"experience_id": experience_id}, matched_attempt.attempt_id)
             with self.session_store.lock_for_task(event.id):
                 session = self.session_store.load_for_task(event.id)
                 if session is None:

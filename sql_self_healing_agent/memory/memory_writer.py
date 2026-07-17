@@ -3,8 +3,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from sql_self_healing_agent.core.enums import AttemptStatus, SessionStatus
-from sql_self_healing_agent.core.time_utils import utc_now_iso
-from sql_self_healing_agent.memory.memory_models import Experience, RepairStep
+from sql_self_healing_agent.memory.keyword_list import KeywordList
+from sql_self_healing_agent.memory.memory_models import ConfirmedExperienceInput
 from sql_self_healing_agent.memory.memory_store import MemoryStore
 from sql_self_healing_agent.metadata.metadata_models import MetadataSnapshot
 from sql_self_healing_agent.repair.repair_models import RepairPlan
@@ -12,65 +12,68 @@ from sql_self_healing_agent.session.session_models import RepairAttempt, RepairS
 
 
 class MemoryWriter:
-    def __init__(self, base_dir: Path | str = Path("memory_store")) -> None:
+    def __init__(self, base_dir: Path | str = Path(".memory"), keyword_list: KeywordList | None = None) -> None:
         self.store = MemoryStore(base_dir)
+        self.keyword_list = keyword_list or KeywordList()
 
-    def write_success_experience(
-        self,
-        session: RepairSession,
-        attempt: RepairAttempt,
-        confirmed_sql: str,
-        metadata_snapshot: MetadataSnapshot | None,
-        repair_plan: RepairPlan | None = None,
-    ) -> Experience:
-        if session.status is not SessionStatus.UPSTREAM_CONFIRMED_SUCCESS:
-            raise ValueError("Session is not upstream-confirmed success")
-        if attempt.status is not AttemptStatus.UPSTREAM_CONFIRMED_SUCCESS:
-            raise ValueError("Attempt is not upstream-confirmed success")
-        if attempt.sql_candidate is None:
-            raise ValueError("Confirmed attempt has no SQL candidate")
-
-        existing = self.store.find_by_source(session.session_id, attempt.attempt_id)
-        if existing is not None:
-            self.store.rebuild_indices()
+    def write_confirmed_experience(self, data: ConfirmedExperienceInput) -> str:
+        existing = self.store.find_by_logical_key(data.session_id, data.attempt_id)
+        if existing:
+            self.store.rebuild_index()
             return existing
-
-        now = utc_now_iso()
+        keywords = self.keyword_list.normalize(data.diagnosed_keywords)
         date = datetime.now(timezone.utc).strftime("%Y%m%d")
-        steps = []
-        if repair_plan is not None:
-            steps = [
-                RepairStep(
-                    step_no=index,
-                    description=action.reason,
-                    before_fragment=action.target_fragment,
-                    after_fragment=action.replacement_fragment,
-                )
-                for index, action in enumerate(repair_plan.actions, start=1)
-            ]
-        metadata_summary = {}
-        if metadata_snapshot is not None:
-            metadata_summary = {
-                "tables": [table.normalized_table_name for table in metadata_snapshot.tables],
-                "missing_tables": metadata_snapshot.missing_tables,
-            }
-        experience = Experience(
-            experience_id=f"exp_{date}_{uuid.uuid4().hex[:8]}",
-            source_session_id=session.session_id,
-            source_attempt_id=attempt.attempt_id,
-            task_id=session.task_id,
-            diagnosed_error_type=attempt.diagnosed_error_type,
-            diagnosed_keywords=attempt.diagnosed_keywords,
-            error_fingerprint=attempt.error_fingerprint or "UNKNOWN:unknown:unknown",
-            primary_entity=(attempt.error_fingerprint.split(":", 2)[1] if attempt.error_fingerprint and ":" in attempt.error_fingerprint else None),
-            original_sql=session.original_sql,
-            failed_sql=attempt.input_failed_sql,
-            confirmed_sql=confirmed_sql,
-            repair_steps=steps,
-            metadata_summary=metadata_summary,
-            created_at=now,
-            updated_at=now,
-            last_verified_at=now,
-        )
-        self.store.save(experience)
-        return experience
+        experience_id = f"exp_{date}_{uuid.uuid4().hex[:8]}"
+        keyword_yaml = "\n".join(f"  - {keyword}" for keyword in keywords)
+        content = f'''---
+keyword:
+{keyword_yaml}
+description: {self._single_line(data.description)}
+---
+
+## Problem
+
+{self._body(data.description)}
+
+## Original SQL
+
+{data.original_sql}
+
+## Error
+
+{self._body(data.error_summary)}
+
+## Confirmed SQL
+
+{data.confirmed_sql}
+
+## Modification
+
+{self._body(data.modification_summary)}
+
+## Applicable Conditions
+
+- 当前错误关键词与本经验一致；
+- 当前元数据仍支持该修改；
+- 修改必须重新通过三关 Gate。
+
+<!-- logical-key: {data.session_id}:{data.attempt_id} -->
+'''
+        self.store.save_markdown(experience_id, content)
+        return experience_id
+
+    def write_success_experience(self, session: RepairSession, attempt: RepairAttempt, confirmed_sql: str, metadata_snapshot: MetadataSnapshot | None, repair_plan: RepairPlan | None = None) -> str:
+        if session.status is not SessionStatus.UPSTREAM_CONFIRMED_SUCCESS or attempt.status is not AttemptStatus.UPSTREAM_CONFIRMED_SUCCESS:
+            raise ValueError("success is not confirmed")
+        if session.latest_sql_candidate != confirmed_sql or session.latest_sql_candidate_attempt_id != attempt.attempt_id:
+            raise ValueError("SUCCESS does not match current candidate")
+        modification = "; ".join(action.reason for action in repair_plan.actions) if repair_plan else "上游确认候选 SQL 成功"
+        return self.write_confirmed_experience(ConfirmedExperienceInput(session_id=session.session_id, attempt_id=attempt.attempt_id, original_sql=session.original_sql, confirmed_sql=confirmed_sql, diagnosed_keywords=attempt.diagnosed_keywords, description=attempt.diagnosed_error_type or "SQL 修复经验", modification_summary=modification, error_summary=attempt.input_error_message or ""))
+
+    @staticmethod
+    def _single_line(value: str) -> str:
+        return " ".join(value.replace("---", "").split())[:500]
+
+    @staticmethod
+    def _body(value: str) -> str:
+        return value.replace("---", "—")[:20000]
