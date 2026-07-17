@@ -188,6 +188,8 @@ external_result.json
 
 ContextManager 以唯一 `AgentContext` 为业务状态，为主 Agent、SubAgent 和 Gate 生成不同的临时只读视图。长内容仅以脱敏 ArtifactRef 进入 Context；压缩优先执行确定性裁剪，并保证原始 SQL、当前候选、Attempt、event_key、当前计划步骤和 Gate 阻断原因不被删除。摘要使用独立预算且禁止递归；关键字段无法恢复时安全收敛为 `HUMAN_REQUIRED`。
 
+候选 SQL 的唯一安全交付路径固定为 `StaticValidationGate → SemanticPreReflectionGate → OutputContractGate → CandidateCommitter`。Static Gate 为每个候选重建 RepairPlan 和 SQLDiffSummary 并复用既有 Validator；BLOCKED 必须拒绝，HIGH/MEDIUM 默认转人工。Gate 修复最多一轮，v2 必须完整重跑三关；未通过 Gate 的候选不会更新 Session 当前候选。
+
 ## Memory 检索与整理
 
 运行时 Memory 统一存放在 `.memory/`：经验为 Frontmatter Markdown，Frontmatter 只包含 `keyword` 列表和 `description`；索引只保留 `keyword_index.json`。`unknown` 会扫描全部 Frontmatter，未命中正文不会进入最终 Context。旧 JSON 经验、fingerprint 索引、失败经验和 consolidation 已删除。
@@ -209,7 +211,7 @@ git diff --check
 当前二阶段测试基线：
 
 ```text
-Ran 99 tests
+Ran 112 tests
 OK
 ```
 
