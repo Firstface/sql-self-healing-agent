@@ -26,4 +26,4 @@ class OllamaClientTest(unittest.TestCase):
         message = str(raised.exception)
         self.assertNotIn(secret_prompt, message)
         self.assertNotIn("properties", message)
-        self.assertIn("CalledProcessError", message)
+        self.assertIn("Ollama process failed", message)

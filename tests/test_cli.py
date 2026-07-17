@@ -18,12 +18,13 @@ class CLITest(unittest.TestCase):
                 json.dumps({"id": "task_123", "status": "FAILED", "sql": "SELECT 1"})
             )
             output = io.StringIO()
-            with patch("sql_self_healing_agent.cli.RepairAgentService") as service:
-                service.return_value.handle_upstream_event.return_value = AgentExternalResult(
-                    status="HUMAN_REQUIRED", message="M1 skeleton only"
-                )
-                with redirect_stdout(output):
-                    run_handle_upstream_event(str(event_path))
+            with patch("sql_self_healing_agent.cli.build_llm_client_from_env", return_value=object()):
+                with patch("sql_self_healing_agent.cli.RepairAgentService") as service:
+                    service.return_value.handle_upstream_event.return_value = AgentExternalResult(
+                        status="HUMAN_REQUIRED", message="M1 skeleton only"
+                    )
+                    with redirect_stdout(output):
+                        run_handle_upstream_event(str(event_path))
             self.assertEqual(
                 json.loads(output.getvalue()),
                 {"status": "HUMAN_REQUIRED", "sql": None, "message": "M1 skeleton only"},

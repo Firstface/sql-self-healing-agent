@@ -121,16 +121,16 @@ class ArkStructuredOutputTest(unittest.TestCase):
         self.assertEqual(call["messages"][0]["role"], "system")
         self.assertEqual(call["messages"][1]["role"], "user")
 
-    def test_first_invalid_second_valid(self) -> None:
+    def test_invalid_output_has_no_implicit_retry(self) -> None:
         fake = FakeArkSDKClient([
             _make_choice("not json at all"),
             _make_choice(json.dumps(DIAGNOSIS_PAYLOAD)),
         ])
         client = ArkLLMClient(model="ep-x", client=fake)
-        result = client.generate_structured("SYS\n<<<INPUT_START>>>\n{}\n<<<INPUT_END>>>", LLMDiagnosisResult)
-        self.assertEqual(result.diagnosed_error_type, DiagnosedErrorType.COLUMN_NOT_FOUND)
-        self.assertEqual(len(fake.calls), 2)
-        self.assertIn("上一次输出不符合 JSON Schema", fake.calls[1]["messages"][1]["content"])
+        with self.assertRaises(LLMClientError) as raised:
+            client.generate_structured("SYS\n<<<INPUT_START>>>\n{}\n<<<INPUT_END>>>", LLMDiagnosisResult)
+        self.assertEqual(raised.exception.error_type.value, "SCHEMA_ERROR")
+        self.assertEqual(len(fake.calls), 1)
 
     def test_two_invalid_raises_llm_client_error(self) -> None:
         fake = FakeArkSDKClient([
