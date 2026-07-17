@@ -191,6 +191,14 @@ class ProviderSelectionTest(unittest.TestCase):
         self.assertIsInstance(client, ArkLLMClient)
 
 
+class ArkClientConfigurationTest(unittest.TestCase):
+    def test_sdk_implicit_retries_are_disabled(self):
+        from unittest.mock import patch
+        with patch("openai.OpenAI") as constructor:
+            ArkLLMClient(api_key="test-key")
+        self.assertEqual(constructor.call_args.kwargs["max_retries"],0)
+
+
 class ArkBusinessDegradationTest(unittest.TestCase):
     def _build_diagnosis(self) -> DiagnosisResult:
         return DiagnosisResult(

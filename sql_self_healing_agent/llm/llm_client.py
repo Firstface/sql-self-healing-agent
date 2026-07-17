@@ -76,7 +76,7 @@ class ArkLLMClient(LLMClient):
             if not resolved_key:
                 raise LLMClientError(LLMErrorType.AUTH_ERROR, "Ark API key is not configured")
             from openai import OpenAI
-            self._client = OpenAI(base_url=self.base_url, api_key=resolved_key)
+            self._client = OpenAI(base_url=self.base_url, api_key=resolved_key, max_retries=0)
 
     def generate_structured(self, prompt: str, response_model: type[T]) -> T:
         system_prompt, user_prompt = self._split_prompt(prompt)
