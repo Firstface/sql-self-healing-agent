@@ -12,8 +12,8 @@ SQL Self-Healing Agent 是一个事件驱动的 SQL 修复组件。
 - [x] ContextManager、ArtifactRef 与安全压缩（`cdf6861`）
 - [x] Static → Semantic → OutputContract 三层 Gate（`7329309`）
 - [x] HookManager、预算、安全、Trace 和受控重试（当前阶段）
-- [x] 新 FAILED/SUCCESS 在线主链接入 AgentRunner（当前阶段）
-- [ ] 删除旧固定 Workflow 在线入口并完成最终收敛
+- [x] 新 FAILED/SUCCESS 在线主链接入 AgentRunner（`c5f8736`）
+- [x] 删除旧固定 Workflow 在线入口并完成最终收敛（当前阶段）
 
 上游系统负责执行 SQL、判定成功以及控制重试轮次；Agent 不执行 SQL，也不会把 `SQL_READY` 当作修复成功，真正成功只能由后续匹配当前候选的 `SUCCESS` 事件确认。
 
@@ -47,6 +47,7 @@ SQL Self-Healing Agent 是一个事件驱动的 SQL 修复组件。
 - Tool、SubAgent、Gate、LLM 和 Context 摘要统一进入 Operation 生命周期；阻断、失败和超时也产生结束 Trace
 - FAILED 在线入口由 AgentRunner 按证据动态选择 Action；候选统一进入三层 Gate，旧固定 Workflow 已移出在线入口
 - SUCCESS 仅匹配 Session 当前候选，确认后写 Frontmatter Memory；重复事件和写失败恢复保持幂等
+- 所有 `AgentExternalResult` 统一由 `ExternalResultFactory` 构造；Provider 必须显式配置，LLMClient 无隐式重试
 
 Validation 会阻断危险语句、写类型引入、WHERE 弱化、JOIN 条件变化、GROUP BY 粒度变化、INSERT 目标或静态分区变化，以及 RepairPlan 之外的修改。写类型 SQL 无法可靠确认时 fail-closed。
 

@@ -4,34 +4,25 @@ from pathlib import Path
 from sql_self_healing_agent.artifacts.artifact_store import ArtifactStore
 from sql_self_healing_agent.agent.artifacts.artifact_ref import ArtifactRef
 from sql_self_healing_agent.core.atomic_io import read_json
-from sql_self_healing_agent.core.enums import AttemptStatus, DiagnosedErrorType, SessionStatus
+from sql_self_healing_agent.core.enums import AttemptStatus, SessionStatus
 from sql_self_healing_agent.core.models import AgentExternalResult, UpstreamTaskEvent
 from sql_self_healing_agent.core.sql_matcher import SQLMatcher
 from sql_self_healing_agent.core.time_utils import utc_now_iso
 from sql_self_healing_agent.orchestrator.external_result_factory import ExternalResultFactory
 from sql_self_healing_agent.orchestrator.agentic_failed_event_processor import AgenticFailedEventProcessor, ProcessorDependencies
 from sql_self_healing_agent.agent.hooks import BudgetHook, CompressionAdapterHook, HookManager, RetryAdapterHook, SafetyHook, TraceHook
-from sql_self_healing_agent.diagnostics.diagnosis_fusion import DiagnosisFusion
 from sql_self_healing_agent.diagnostics.llm_diagnoser import LLMDiagnoser
-from sql_self_healing_agent.llm.llm_client import LLMClient, LLMClientError
-from sql_self_healing_agent.diagnostics.diagnosis_models import DiagnosisHistoryItem, DiagnosisInput, DiagnosisResult
-from sql_self_healing_agent.diagnostics.rule_classifier import RuleClassifier
-from sql_self_healing_agent.logs.log_compressor import LogCompressor
+from sql_self_healing_agent.diagnostics.diagnosis_models import DiagnosisResult
+from sql_self_healing_agent.metadata.metadata_models import MetadataSnapshot
+from sql_self_healing_agent.llm.llm_client import LLMClient
 from sql_self_healing_agent.memory.memory_retriever import MemoryRetriever
 from sql_self_healing_agent.memory.memory_writer import MemoryWriter
-from sql_self_healing_agent.metadata.metadata_models import MetadataSnapshot
 from sql_self_healing_agent.metadata.mock_metadata_provider import MockMetadataProvider
-from sql_self_healing_agent.metadata.sql_table_extractor import SQLTableExtractor
 from sql_self_healing_agent.repair.evaluator import RepairEvaluator
-from sql_self_healing_agent.repair.reflection import (
-    PostReflectionInput,
-    PreReflectionDecision,
-    PreReflectionInput,
-)
-from sql_self_healing_agent.repair.repair_models import RepairPlan, RepairPlannerInput, SQLGeneratorInput
+from sql_self_healing_agent.repair.reflection import PostReflectionInput
+from sql_self_healing_agent.repair.repair_models import RepairPlan
 from sql_self_healing_agent.repair.repair_planner import RepairPlanner
-from sql_self_healing_agent.repair.sql_generator import SQLGenerator, build_diff
-from sql_self_healing_agent.repair.validator import Validator
+from sql_self_healing_agent.repair.sql_generator import SQLGenerator
 from sql_self_healing_agent.session.session_models import RepairSession
 from sql_self_healing_agent.session.session_store import SessionStore
 from sql_self_healing_agent.session.event_key_builder import build_event_key
@@ -48,18 +39,13 @@ class RepairAgentService:
         self.metadata_provider = MockMetadataProvider(metadata_path)
         default_vocab = Path(__file__).parents[1] / "logs" / "keyword_vocab.json"
         self.keyword_vocab = json.loads(Path(keyword_vocab_path or default_vocab).read_text(encoding="utf-8"))
-        self.log_compressor = LogCompressor()
-        self.rule_classifier = RuleClassifier()
-        self.diagnosis_fusion = DiagnosisFusion()
         self.llm_client = llm_client
         self.llm_diagnoser = LLMDiagnoser(self.llm_client) if self.llm_client is not None else None
-        self.table_extractor = SQLTableExtractor()
         self.memory_retriever = MemoryRetriever(memory_dir)
         self.memory_writer = MemoryWriter(memory_dir)
         self.repair_planner = RepairPlanner(self.metadata_provider)
         self.sql_generator = SQLGenerator(self.llm_client)
         self.allow_medium_risk = allow_medium_risk
-        self.validator = Validator(allow_medium_risk=allow_medium_risk)
         self.evaluator = RepairEvaluator(self.llm_client)
         self.external_results = ExternalResultFactory()
         self.hook_manager = HookManager([TraceHook(self.trace_writer), BudgetHook(), SafetyHook(), CompressionAdapterHook(), RetryAdapterHook()])
@@ -231,7 +217,7 @@ class RepairAgentService:
         return self._persist_external_result(
             session,
             attempt,
-            AgentExternalResult(status="HUMAN_REQUIRED", message=message),
+            self.external_results.human_required(message),
         )
 
     def _handle_success_event(self, event: UpstreamTaskEvent) -> AgentExternalResult:
