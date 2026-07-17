@@ -1,6 +1,9 @@
 # SQL Self-Healing Agent
 
-SQL Self-Healing Agent 是一个事件驱动的 SQL 修复组件。上游系统负责执行 SQL、判定成功以及控制重试轮次；Agent 每次只处理一个 `UpstreamTaskEvent`，并返回一个 `AgentExternalResult`。Agent 本身不会执行 SQL，也不会把 `SQL_READY` 当作修复成功；真正成功只能由后续 `SUCCESS` 事件确认。
+SQL Self-Healing Agent 是一个事件驱动的 SQL 修复组件。
+
+> 二阶段改造进度：事件与状态阶段已切换到 `event_key` 幂等、Session 级锁和“SUCCESS 仅匹配当前候选”语义；默认运行目录为 `.sessions/`。
+上游系统负责执行 SQL、判定成功以及控制重试轮次；Agent 每次只处理一个 `UpstreamTaskEvent`，并返回一个 `AgentExternalResult`。Agent 本身不会执行 SQL，也不会把 `SQL_READY` 当作修复成功；真正成功只能由后续 `SUCCESS` 事件确认。
 
 当前已完成 **M1 骨架与事件入口**、**M2 单候选生成** 和 **M3 Mock 上游闭环**。
 

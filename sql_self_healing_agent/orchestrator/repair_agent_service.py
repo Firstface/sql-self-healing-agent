@@ -7,6 +7,7 @@ from sql_self_healing_agent.core.enums import AttemptStatus, DiagnosedErrorType,
 from sql_self_healing_agent.core.models import AgentExternalResult, UpstreamTaskEvent
 from sql_self_healing_agent.core.sql_matcher import SQLMatcher
 from sql_self_healing_agent.core.time_utils import utc_now_iso
+from sql_self_healing_agent.orchestrator.external_result_factory import ExternalResultFactory
 from sql_self_healing_agent.diagnostics.diagnosis_fusion import DiagnosisFusion
 from sql_self_healing_agent.diagnostics.llm_diagnoser import LLMDiagnoser
 from sql_self_healing_agent.llm.llm_client import LLMClient, LLMClientError
@@ -30,11 +31,13 @@ from sql_self_healing_agent.repair.sql_generator import SQLGenerator, build_diff
 from sql_self_healing_agent.repair.validator import Validator
 from sql_self_healing_agent.session.session_models import RepairSession
 from sql_self_healing_agent.session.session_store import SessionStore
+from sql_self_healing_agent.session.event_key_builder import build_event_key
+from sql_self_healing_agent.session.session_lock import SessionLockTimeout
 from sql_self_healing_agent.trace.trace_writer import TraceWriter
 
 
 class RepairAgentService:
-    def __init__(self, sessions_dir: Path | str = Path("sessions"), llm_client: LLMClient | None = None, metadata_path: Path | str = Path("mocks/metadata/tables.json"), keyword_vocab_path: Path | str | None = None, allow_medium_risk: bool = False, memory_dir: Path | str = Path("memory_store")) -> None:
+    def __init__(self, sessions_dir: Path | str = Path(".sessions"), llm_client: LLMClient | None = None, metadata_path: Path | str = Path("mocks/metadata/tables.json"), keyword_vocab_path: Path | str | None = None, allow_medium_risk: bool = False, memory_dir: Path | str = Path("memory_store")) -> None:
         self.session_store = SessionStore(sessions_dir)
         self.trace_writer = TraceWriter(sessions_dir)
         self.artifact_store = ArtifactStore(sessions_dir)
@@ -54,6 +57,7 @@ class RepairAgentService:
         self.sql_generator = SQLGenerator(self.llm_client)
         self.validator = Validator(allow_medium_risk=allow_medium_risk)
         self.evaluator = RepairEvaluator(self.llm_client)
+        self.external_results = ExternalResultFactory()
 
     def handle_upstream_event(self, event: UpstreamTaskEvent) -> AgentExternalResult:
         if event.status == "FAILED":
@@ -69,79 +73,73 @@ class RepairAgentService:
                     "orchestrator",
                     {"error_type": type(error).__name__},
                 )
-                return AgentExternalResult(
-                    status="HUMAN_REQUIRED",
-                    message="SUCCESS 事件处理失败，请人工检查本地状态。",
-                )
-        return AgentExternalResult(status="NO_SQL", message=f"Unsupported upstream event status: {event.status}")
+                return self.external_results.human_required("SUCCESS 事件处理失败，请人工检查本地状态。")
+        return self.external_results.no_sql(f"Unsupported upstream event status: {event.status}")
 
     def _is_duplicate_failed_event(self, session: RepairSession, event: UpstreamTaskEvent) -> bool:
-        return any(record.task_id == event.id and record.status == event.status and self.sql_matcher.match(record.sql, event.sql) and record.log_path == event.log_path for record in session.upstream_events)
+        return self.session_store.find_event(session, build_event_key(event)) is not None
 
     def _is_duplicate_success_event(self, session: RepairSession, event: UpstreamTaskEvent) -> bool:
-        return any(record.task_id == event.id and record.status == event.status and self.sql_matcher.match(record.sql, event.sql) for record in session.upstream_events)
+        return self.session_store.find_event(session, build_event_key(event)) is not None
 
     def _load_processed_failed_result(
         self, session: RepairSession, event: UpstreamTaskEvent
     ) -> AgentExternalResult | None:
-        matching_event_ids = {
-            record.event_id
-            for record in session.upstream_events
-            if record.task_id == event.id
-            and record.status == event.status
-            and self.sql_matcher.match(record.sql, event.sql)
-            and record.log_path == event.log_path
-        }
-        for attempt_id in reversed(session.attempt_ids):
-            attempt = self.session_store.load_attempt(session, attempt_id)
-            if attempt.input_event_id not in matching_event_ids:
-                continue
-            result_path = (
-                Path(session.artifact_dir) / attempt.attempt_id / "external_result.json"
-            )
-            if result_path.exists():
-                return AgentExternalResult.model_validate(read_json(result_path))
+        event_key = build_event_key(event)
+        record = self.session_store.find_event(session, event_key)
+        if record is not None and record.result_ref and Path(record.result_ref).exists():
+            return AgentExternalResult.model_validate(read_json(Path(record.result_ref)))
         return None
 
     def _persist_external_result(
         self, session: RepairSession, attempt, result: AgentExternalResult
     ) -> AgentExternalResult:
-        self.artifact_store.save_json(
+        result_ref = self.artifact_store.save_json(
             session.session_id,
             attempt.attempt_id,
             "external_result.json",
             result.model_dump(mode="json"),
         )
+        session.last_external_result_ref = result_ref
+        record = self.session_store.find_event(session, attempt.source_event_key)
+        if record is not None:
+            self.session_store.finish_event(session, record, result_ref)
+        else:
+            self.session_store.save_session(session)
         return result
 
     def _handle_failed_event(self, event: UpstreamTaskEvent) -> AgentExternalResult:
-        session = self.session_store.load_or_create_for_event(event)
-        if self._is_duplicate_failed_event(session, event):
-            processed_result = self._load_processed_failed_result(session, event)
-            if processed_result is not None:
-                return processed_result
-            if session.latest_sql_candidate:
-                return AgentExternalResult(status="SQL_READY", sql=session.latest_sql_candidate)
-            return AgentExternalResult(status="HUMAN_REQUIRED", message="该失败事件已处理，但没有安全候选 SQL。")
+        try:
+            with self.session_store.lock_for_task(event.id):
+                session = self.session_store.load_or_create_for_event(event)
+                existing = self.session_store.find_event(session, build_event_key(event))
+                if existing is not None:
+                    processed_result = self._load_processed_failed_result(session, event)
+                    if processed_result is not None:
+                        return processed_result
+                    return self.external_results.human_required(
+                        "该事件正在处理或需要从持久化状态恢复。"
+                    )
+                event_record = self.session_store.create_event_record(session, event)
+                self.session_store.append_upstream_event(session, event_record)
+                attempt = self.session_store.create_attempt(session, event_record)
+                session.status = SessionStatus.RUNNING
+                session.updated_at = utc_now_iso()
+                self.session_store.save_session(session)
+        except SessionLockTimeout:
+            return self.external_results.human_required("Session 正在处理中，请稍后重试。")
+
         previous_attempt = None
         if (
             session.latest_sql_candidate
             and session.latest_sql_candidate_attempt_id
-            and self.sql_matcher.match(event.sql, session.latest_sql_candidate)
+            and event.sql == session.latest_sql_candidate
         ):
             previous_attempt = self.session_store.load_attempt(
                 session, session.latest_sql_candidate_attempt_id
             )
-        event_record = self.session_store.create_event_record(event)
-        self.session_store.append_upstream_event(session, event_record)
+
         self.trace_writer.emit(session.session_id, "upstream_event_received", "upstream_event", {"status": event.status})
-        session.status = SessionStatus.RUNNING
-        session.updated_at = utc_now_iso()
-        self.session_store.save_session(session)
-        attempt = self.session_store.create_attempt(session, event_record)
-        if previous_attempt is not None:
-            attempt.previous_attempt_id = previous_attempt.attempt_id
-            self.session_store.save_attempt(session, attempt)
         self.artifact_store.save_json(session.session_id, attempt.attempt_id, "upstream_event.json", event_record.model_dump(mode="json"))
         self.trace_writer.emit(session.session_id, "attempt_created", "orchestrator", {"attempt_no": attempt.attempt_no}, attempt.attempt_id)
         try:
@@ -313,12 +311,23 @@ class RepairAgentService:
             attempt.status = AttemptStatus.GENERATED
             attempt.status = AttemptStatus.SQL_READY
             attempt.updated_at = utc_now_iso()
-            session.status = SessionStatus.SQL_READY_PENDING_UPSTREAM
-            session.latest_sql_candidate = generation.sql_candidate
-            session.latest_sql_candidate_attempt_id = attempt.attempt_id
-            session.updated_at = utc_now_iso()
-            self.session_store.save_attempt(session, attempt)
-            self.session_store.save_session(session)
+            try:
+                with self.session_store.lock_for_task(event.id):
+                    latest_session = self.session_store.load_for_task(event.id)
+                    if latest_session is None:
+                        return self.external_results.human_required("Session 丢失，无法提交候选 SQL。")
+                    current_record = self.session_store.find_event(latest_session, attempt.source_event_key)
+                    if current_record is None or current_record.attempt_id != attempt.attempt_id:
+                        return self.external_results.human_required("事件状态已变化，无法安全提交候选 SQL。")
+                    latest_session.status = SessionStatus.SQL_READY_PENDING_UPSTREAM
+                    latest_session.latest_sql_candidate = generation.sql_candidate
+                    latest_session.latest_sql_candidate_attempt_id = attempt.attempt_id
+                    latest_session.updated_at = utc_now_iso()
+                    self.session_store.save_attempt(latest_session, attempt)
+                    self.session_store.save_session(latest_session)
+                    session = latest_session
+            except SessionLockTimeout:
+                return self.external_results.human_required("Session 正在处理中，候选提交失败。")
             self.trace_writer.emit(session.session_id, "sql_ready_returned", "orchestrator", {}, attempt.attempt_id)
             return self._persist_external_result(
                 session,
@@ -332,7 +341,7 @@ class RepairAgentService:
             session.updated_at = utc_now_iso()
             self.session_store.save_attempt(session, attempt)
             self.session_store.save_session(session)
-            self.trace_writer.emit(session.session_id, "system_error", "orchestrator", {"error": str(error)}, attempt.attempt_id)
+            self.trace_writer.emit(session.session_id, "system_error", "orchestrator", {"error_type": type(error).__name__}, attempt.attempt_id)
             return self._persist_external_result(
                 session,
                 attempt,
@@ -363,54 +372,65 @@ class RepairAgentService:
         )
 
     def _handle_success_event(self, event: UpstreamTaskEvent) -> AgentExternalResult:
-        session = self.session_store.load_or_create_for_event(event)
-        duplicate = self._is_duplicate_success_event(session, event)
-        if not duplicate:
-            event_record = self.session_store.create_event_record(event)
-            self.session_store.append_upstream_event(session, event_record)
-            self.trace_writer.emit(session.session_id, "upstream_success_received", "upstream_event", {})
-        matched_attempt = None
-        for attempt_id in reversed(session.attempt_ids):
-            attempt = self.session_store.load_attempt(session, attempt_id)
-            if attempt.sql_candidate and self.sql_matcher.match(event.sql, attempt.sql_candidate):
-                matched_attempt = attempt
-                break
-        if matched_attempt is None:
-            if not duplicate:
-                self.trace_writer.emit(session.session_id, "upstream_success_unmatched_candidate", "upstream_event", {})
-            return AgentExternalResult(status="SUCCESS_ACK")
+        try:
+            with self.session_store.lock_for_task(event.id):
+                session = self.session_store.load_or_create_for_event(event)
+                event_key = build_event_key(event)
+                existing = self.session_store.find_event(session, event_key)
+                if existing is not None and existing.processing_status == "SUCCEEDED":
+                    return self.external_results.success_ack()
+                if existing is not None:
+                    event_record = existing
+                else:
+                    event_record = self.session_store.create_event_record(session, event)
+                self.session_store.append_upstream_event(session, event_record)
+                self.trace_writer.emit(session.session_id, "upstream_success_received", "upstream_event", {})
 
-        matched_attempt.status = AttemptStatus.UPSTREAM_CONFIRMED_SUCCESS
-        matched_attempt.updated_at = utc_now_iso()
-        session.status = SessionStatus.UPSTREAM_CONFIRMED_SUCCESS
-        session.confirmed_sql = event.sql
-        session.confirmed_attempt_id = matched_attempt.attempt_id
-        session.updated_at = utc_now_iso()
-        self.session_store.save_attempt(session, matched_attempt)
-        self.session_store.save_session(session)
-        if not duplicate:
-            self.trace_writer.emit(session.session_id, "upstream_success_matched", "upstream_event", {"attempt_id": matched_attempt.attempt_id}, matched_attempt.attempt_id)
+                current_sql = session.latest_sql_candidate
+                current_attempt_id = session.latest_sql_candidate_attempt_id
+                if current_sql is None or current_attempt_id is None or event.sql != current_sql:
+                    self.trace_writer.emit(session.session_id, "upstream_success_unmatched_candidate", "upstream_event", {})
+                    self.session_store.finish_event(session, event_record, None, error_code="UNMATCHED_SUCCESS")
+                    return self.external_results.success_ack(
+                        "SUCCESS 未匹配当前候选，已记录但未确认历史 Attempt"
+                    )
+                matched_attempt = self.session_store.load_attempt(session, current_attempt_id)
+                matched_attempt.status = AttemptStatus.UPSTREAM_CONFIRMED_SUCCESS
+                matched_attempt.updated_at = utc_now_iso()
+                session.status = SessionStatus.UPSTREAM_CONFIRMED_SUCCESS
+                session.confirmed_sql = current_sql
+                session.confirmed_attempt_id = current_attempt_id
+                session.updated_at = utc_now_iso()
+                self.session_store.save_attempt(session, matched_attempt)
+                self.session_store.save_session(session)
+                self.trace_writer.emit(session.session_id, "upstream_success_matched", "upstream_event", {"attempt_id": current_attempt_id}, current_attempt_id)
+        except SessionLockTimeout:
+            return self.external_results.human_required("Session 正在处理中，请稍后重试。")
+
         try:
             metadata = self._load_attempt_artifact(matched_attempt.metadata_snapshot_path, MetadataSnapshot)
             repair_plan = self._load_attempt_artifact(matched_attempt.repair_plan_path, RepairPlan)
-            if not duplicate:
-                self.trace_writer.emit(session.session_id, "memory_write_started", "memory", {}, matched_attempt.attempt_id)
+            self.trace_writer.emit(session.session_id, "memory_write_started", "memory", {}, matched_attempt.attempt_id)
             experience = self.memory_writer.write_success_experience(
-                session, matched_attempt, event.sql, metadata, repair_plan
+                session, matched_attempt, current_sql, metadata, repair_plan
             )
-            if not duplicate:
-                self.trace_writer.emit(session.session_id, "memory_write_finished", "memory", {"experience_id": experience.experience_id}, matched_attempt.attempt_id)
-            return AgentExternalResult(status="SUCCESS_ACK")
+            self.trace_writer.emit(session.session_id, "memory_write_finished", "memory", {"experience_id": experience.experience_id}, matched_attempt.attempt_id)
+            with self.session_store.lock_for_task(event.id):
+                session = self.session_store.load_for_task(event.id)
+                if session is None:
+                    return self.external_results.human_required("Session 丢失，无法完成 SUCCESS 事件。")
+                record = self.session_store.find_event(session, event_key)
+                if record is not None:
+                    self.session_store.finish_event(session, record, None)
+            return self.external_results.success_ack("当前候选已被上游确认成功")
         except Exception as error:
-            if not duplicate:
-                self.trace_writer.emit(
-                    session.session_id,
-                    "stage_failed",
-                    "memory",
-                    {"error_type": type(error).__name__},
-                    matched_attempt.attempt_id,
-                )
-            return AgentExternalResult(
-                status="HUMAN_REQUIRED",
-                message="上游成功已确认，但成功经验写入失败，请人工检查存储。",
+            self.trace_writer.emit(
+                session.session_id,
+                "stage_failed",
+                "memory",
+                {"error_type": type(error).__name__},
+                matched_attempt.attempt_id,
+            )
+            return self.external_results.human_required(
+                "上游成功已确认，但成功经验写入失败，请人工检查存储。"
             )

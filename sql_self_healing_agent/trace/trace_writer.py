@@ -7,7 +7,7 @@ from sql_self_healing_agent.trace.trace_models import TraceEvent
 
 
 class TraceWriter:
-    def __init__(self, base_dir: Path | str = Path("sessions")) -> None:
+    def __init__(self, base_dir: Path | str = Path(".sessions")) -> None:
         self.base_dir = Path(base_dir)
 
     def trace_path(self, session_id: str) -> Path:

@@ -4,7 +4,7 @@ from sql_self_healing_agent.core.atomic_io import write_json_atomic, write_text_
 
 
 class ArtifactStore:
-    def __init__(self, base_dir: Path | str = Path("sessions")) -> None:
+    def __init__(self, base_dir: Path | str = Path(".sessions")) -> None:
         self.base_dir = Path(base_dir)
 
     def _artifact_path(

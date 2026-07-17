@@ -32,7 +32,7 @@ class MemoryWriterTest(unittest.TestCase):
             self.assertEqual(service.handle_upstream_event(unmatched).status, "SUCCESS_ACK")
             self.assertFalse((root / "memory_store/experiences").exists())
 
-            matched = UpstreamTaskEvent(id="task_memory", status="SUCCESS", sql=f" /* comment */ {ready.sql}; ")
+            matched = UpstreamTaskEvent(id="task_memory", status="SUCCESS", sql=ready.sql or "")
             self.assertEqual(service.handle_upstream_event(matched).status, "SUCCESS_ACK")
             experiences = list((root / "memory_store/experiences").glob("*.json"))
             self.assertEqual(len(experiences), 1)

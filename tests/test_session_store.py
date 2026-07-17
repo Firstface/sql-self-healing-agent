@@ -14,7 +14,7 @@ class SessionStoreTest(unittest.TestCase):
                 id="task/123", status="FAILED", sql="SELECT 1"
             )
             session = store.load_or_create_for_event(event)
-            record = store.create_event_record(event)
+            record = store.create_event_record(session, event)
             store.append_upstream_event(session, record)
             attempt = store.create_attempt(session, record)
 

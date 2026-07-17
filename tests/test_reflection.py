@@ -91,6 +91,7 @@ class PostReflectionTest(unittest.TestCase):
         attempt = RepairAttempt(
             attempt_id="attempt_001",
             attempt_no=1,
+            source_event_key="evt",
             input_event_id="evt",
             input_failed_sql="SELECT a",
             created_at="2026-07-15T00:00:00Z",

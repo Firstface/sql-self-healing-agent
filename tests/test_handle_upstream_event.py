@@ -31,7 +31,7 @@ class HandleUpstreamEventTest(unittest.TestCase):
             self.assertEqual(session["attempt_ids"], ["attempt_001"])
             self.assertEqual(session["status"], "SQL_READY_PENDING_UPSTREAM")
 
-    def test_success_idempotency_ignores_log_path(self) -> None:
+    def test_success_event_key_includes_log_path(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             sessions = Path(temporary_directory) / "sessions"
             service = RepairAgentService(sessions, llm_client=FakeLLMClient(), metadata_path=Path(__file__).parents[1] / "mocks/metadata/tables.json")
@@ -43,7 +43,7 @@ class HandleUpstreamEventTest(unittest.TestCase):
             self.assertEqual(second_result, first_result)
             session_dir = sessions / "sess_task_success"
             session = json.loads((session_dir / "session.json").read_text())
-            self.assertEqual(len(session["upstream_events"]), 1)
+            self.assertEqual(len(session["upstream_events"]), 2)
 
 
 class GeneratorFailingClient:
