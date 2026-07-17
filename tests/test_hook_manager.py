@@ -92,3 +92,4 @@ class HookManagerLifecycleTest(unittest.TestCase):
         self.assertEqual(manager.operations[-1].error_code,"OPERATION_CALLER_FORBIDDEN")
         with self.assertRaises(HookBlockedError):
             manager.execute_tool_call(lambda:"never",session_id="s",attempt_id=None,purpose="x")
+        self.assertEqual(manager.operations[-1].error_code,"OPERATION_OWNERSHIP_MISSING")

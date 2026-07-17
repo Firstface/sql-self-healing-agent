@@ -66,6 +66,7 @@ class RunScopedLLMGovernanceTest(unittest.TestCase):
                 trace = [json.loads(line) for line in (session_dir / "trace.jsonl").read_text().splitlines()]
                 starts = [item for item in trace if item["event_type"] == "operation_started" and item["stage"] == "LLM_CALL"]
                 finishes = [item for item in trace if item["event_type"] == "operation_finished" and item["stage"] == "LLM_CALL"]
+                self.assertEqual(run_state["llm_call_count"], len(starts))
                 self.assertEqual([item["payload"]["purpose"] for item in starts], ["diagnosis", "sql_generation", "pre_reflection"])
                 self.assertEqual(len(finishes), 3)
                 serialized = "\n".join(json.dumps(item) for item in trace)
