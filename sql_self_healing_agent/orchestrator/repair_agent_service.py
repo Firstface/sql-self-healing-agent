@@ -46,7 +46,6 @@ class RepairAgentService:
         default_vocab = Path(__file__).parents[1] / "logs" / "keyword_vocab.json"
         self.keyword_vocab = json.loads(Path(keyword_vocab_path or default_vocab).read_text(encoding="utf-8"))
         self.llm_client = llm_client
-        self.llm_diagnoser = LLMDiagnoser(self.llm_client) if self.llm_client is not None else None
         self.memory_retriever = MemoryRetriever(
             memory_dir,
             max_context_hits=self.agent_config.memory_max_context_hits,
@@ -54,9 +53,7 @@ class RepairAgentService:
         )
         self.memory_writer = MemoryWriter(memory_dir)
         self.repair_planner = RepairPlanner(self.metadata_provider)
-        self.sql_generator = SQLGenerator(self.llm_client)
         self.allow_medium_risk = allow_medium_risk
-        self.evaluator = RepairEvaluator(self.llm_client)
         self.external_results = ExternalResultFactory()
         self._active_event_keys: set[str] = set()
         self._active_event_keys_lock = Lock()

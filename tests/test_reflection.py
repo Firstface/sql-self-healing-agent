@@ -1,4 +1,5 @@
 import unittest
+from tests.llm_test_adapter import build_test_llm_adapter
 
 from sql_self_healing_agent.core.enums import DiagnosedErrorType, RiskLevel
 from sql_self_healing_agent.diagnostics.diagnosis_models import DiagnosisResult
@@ -14,7 +15,7 @@ class ReflectionTest(unittest.TestCase):
         plan = RepairPlan(plan_id="plan", repairable=True, actions=[RepairAction(action_type=RepairActionType.REPLACE_COLUMN, target_fragment="a", replacement_fragment="b", reason="test", risk_level="LOW")], confidence=0.9)
         diagnosis = DiagnosisResult(diagnosed_error_type=DiagnosedErrorType.COLUMN_NOT_FOUND, diagnosed_keywords=["column_not_found"], error_fingerprint="x", confidence=0.9, is_repairable=True)
         reflection_input = PreReflectionInput(failed_sql="SELECT a", sql_candidate="SELECT b", diagnosis=diagnosis, repair_plan=plan, validation_result=ValidationResult(risk_level=RiskLevel.BLOCKED, passed=False, allow_return_sql=False, reason="blocked"), sql_diff_summary=SQLDiffSummary(changed_fragment_count=1, changed_fragments=[], parse_success=True))
-        result = RepairEvaluator(FakeLLMClient()).pre_reflect(reflection_input)
+        result = RepairEvaluator((client := FakeLLMClient()), build_test_llm_adapter(client)).pre_reflect(reflection_input)
         self.assertEqual(result.decision, PreReflectionDecision.BLOCK)
 
 
@@ -29,7 +30,7 @@ class ReflectionFailureTest(unittest.TestCase):
         diagnosis = DiagnosisResult(diagnosed_error_type=DiagnosedErrorType.COLUMN_NOT_FOUND, diagnosed_keywords=["column_not_found"], error_fingerprint="x", confidence=0.9, is_repairable=True)
         validation = ValidationResult(risk_level=RiskLevel.LOW, passed=True, allow_return_sql=True)
         reflection_input = PreReflectionInput(failed_sql="SELECT a", sql_candidate="SELECT b", diagnosis=diagnosis, repair_plan=plan, validation_result=validation, sql_diff_summary=SQLDiffSummary(changed_fragment_count=1, changed_fragments=[], parse_success=True))
-        result = RepairEvaluator(FailingReflectionClient()).pre_reflect(reflection_input)
+        result = RepairEvaluator((client := FailingReflectionClient()), build_test_llm_adapter(client)).pre_reflect(reflection_input)
         self.assertEqual(result.decision, PreReflectionDecision.BLOCK)
         self.assertEqual(result.confidence, 0.0)
 
@@ -53,7 +54,7 @@ class ReflectionConsistencyTest(unittest.TestCase):
         diagnosis = DiagnosisResult(diagnosed_error_type=DiagnosedErrorType.COLUMN_NOT_FOUND, diagnosed_keywords=["column_not_found"], error_fingerprint="x", confidence=0.9, is_repairable=True)
         validation = ValidationResult(risk_level=RiskLevel.LOW, passed=True, allow_return_sql=True)
         reflection_input = PreReflectionInput(failed_sql="SELECT a", sql_candidate="SELECT b", diagnosis=diagnosis, repair_plan=plan, validation_result=validation, sql_diff_summary=SQLDiffSummary(changed_fragment_count=1, changed_fragments=[], parse_success=True))
-        result = RepairEvaluator(ContradictoryReturnClient()).pre_reflect(reflection_input)
+        result = RepairEvaluator((client := ContradictoryReturnClient()), build_test_llm_adapter(client)).pre_reflect(reflection_input)
         self.assertEqual(result.decision, PreReflectionDecision.BLOCK)
 
 class PostReflectionTest(unittest.TestCase):

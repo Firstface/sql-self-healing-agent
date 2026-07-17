@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from tests.llm_test_adapter import build_test_llm_adapter
 from pathlib import Path
 from unittest.mock import patch
 
@@ -215,7 +216,7 @@ class ArkBusinessDegradationTest(unittest.TestCase):
             )],
             confidence=0.9,
         )
-        result = SQLGenerator(ark).generate(SQLGeneratorInput(failed_sql="SELECT pay_amt", repair_plan=plan))
+        result = SQLGenerator(ark, build_test_llm_adapter(ark)).generate(SQLGeneratorInput(failed_sql="SELECT pay_amt", repair_plan=plan))
         self.assertFalse(result.generated)
         self.assertTrue(result.cannot_generate_safely)
 
@@ -242,7 +243,7 @@ class ArkBusinessDegradationTest(unittest.TestCase):
             validation_result=ValidationResult(risk_level=RiskLevel.LOW, passed=True, allow_return_sql=True),
             sql_diff_summary=SQLDiffSummary(changed_fragment_count=1, changed_fragments=[], parse_success=True),
         )
-        result = RepairEvaluator(ark).pre_reflect(reflection_input)
+        result = RepairEvaluator(ark, build_test_llm_adapter(ark)).pre_reflect(reflection_input)
         self.assertEqual(result.decision, PreReflectionDecision.BLOCK)
 
     def test_ark_generator_failure_does_not_produce_system_error(self) -> None:
@@ -299,6 +300,6 @@ class ArkBusinessDegradationTest(unittest.TestCase):
             ),
             sql_diff_summary=SQLDiffSummary(changed_fragment_count=1, changed_fragments=[], parse_success=True),
         )
-        result = RepairEvaluator(ark).pre_reflect(reflection_input)
+        result = RepairEvaluator(ark, build_test_llm_adapter(ark)).pre_reflect(reflection_input)
         self.assertEqual(result.decision, PreReflectionDecision.BLOCK)
         self.assertEqual(len(fake.calls), 0)

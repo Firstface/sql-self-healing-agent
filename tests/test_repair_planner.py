@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from tests.llm_test_adapter import build_test_llm_adapter
 from pathlib import Path
 
 from sql_self_healing_agent.core.enums import DiagnosedErrorType
@@ -36,7 +37,7 @@ class FailingSQLGeneratorClient:
 class SQLGeneratorFailureTest(unittest.TestCase):
     def test_invalid_output_returns_cannot_generate_safely(self) -> None:
         plan = RepairPlan(plan_id="plan", repairable=True, actions=[RepairAction(action_type=RepairActionType.REPLACE_COLUMN, target_fragment="a", replacement_fragment="b", reason="test", risk_level="LOW")], confidence=0.9)
-        result = SQLGenerator(FailingSQLGeneratorClient()).generate(SQLGeneratorInput(failed_sql="SELECT a", repair_plan=plan))
+        result = SQLGenerator((client := FailingSQLGeneratorClient()), build_test_llm_adapter(client)).generate(SQLGeneratorInput(failed_sql="SELECT a", repair_plan=plan))
         self.assertFalse(result.generated)
         self.assertTrue(result.cannot_generate_safely)
         self.assertEqual(result.reason, "LLM 未能返回合法的结构化 SQL 结果。")

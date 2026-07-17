@@ -1,17 +1,15 @@
 from sql_self_healing_agent.diagnostics.diagnosis_models import DiagnosisInput, LLMDiagnosisResult
 from sql_self_healing_agent.llm.llm_client import LLMClient
 from sql_self_healing_agent.agent.llm import LLMAdapter
-from sql_self_healing_agent.agent.hooks import HookManager
-from sql_self_healing_agent.agent.llm import LLMCallContext
 from sql_self_healing_agent.llm.prompt_templates import DIAGNOSIS_SYSTEM, structured_prompt
 
 
 class LLMDiagnoser:
     def __init__(self, client: LLMClient, adapter: LLMAdapter | None = None) -> None:
+        if adapter is None:
+            raise ValueError("LLMDiagnoser requires an LLMAdapter")
         self.client = client
-        self.adapter = adapter or LLMAdapter(
-            client, HookManager([]), LLMCallContext(session_id="standalone", attempt_id="standalone")
-        )
+        self.adapter = adapter
 
     def diagnose(self, diagnosis_input: DiagnosisInput) -> LLMDiagnosisResult:
         prompt = structured_prompt(DIAGNOSIS_SYSTEM, diagnosis_input, LLMDiagnosisResult)

@@ -1,8 +1,6 @@
 from sql_self_healing_agent.core.enums import RiskLevel
 from sql_self_healing_agent.llm.llm_client import LLMClient, LLMClientError
 from sql_self_healing_agent.agent.llm import LLMAdapter
-from sql_self_healing_agent.agent.hooks import HookManager
-from sql_self_healing_agent.agent.llm import LLMCallContext
 from sql_self_healing_agent.llm.prompt_templates import (
     POST_REFLECTION_SYSTEM,
     PRE_REFLECTION_SYSTEM,
@@ -21,15 +19,10 @@ from sql_self_healing_agent.repair.reflection import (
 
 class RepairEvaluator:
     def __init__(self, client: LLMClient | None = None, adapter: LLMAdapter | None = None) -> None:
+        if client is not None and adapter is None:
+            raise ValueError("RepairEvaluator requires an LLMAdapter when client is configured")
         self.client = client
-        self.adapter = (
-            adapter
-            or (
-                LLMAdapter(client, HookManager([]), LLMCallContext(session_id="standalone", attempt_id="standalone"))
-                if client is not None
-                else None
-            )
-        )
+        self.adapter = adapter
 
     def pre_reflect(
         self, reflection_input: PreReflectionInput
