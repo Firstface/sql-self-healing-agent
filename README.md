@@ -2,10 +2,20 @@
 
 SQL Self-Healing Agent 是一个事件驱动的 SQL 修复组件。
 
-> 二阶段改造进度：事件与状态阶段已切换到 `event_key` 幂等、Session 级锁和“SUCCESS 仅匹配当前候选”语义；默认运行目录为 `.sessions/`。
-上游系统负责执行 SQL、判定成功以及控制重试轮次；Agent 每次只处理一个 `UpstreamTaskEvent`，并返回一个 `AgentExternalResult`。Agent 本身不会执行 SQL，也不会把 `SQL_READY` 当作修复成功；真正成功只能由后续 `SUCCESS` 事件确认。
+## 二阶段改造进度
 
-当前已完成 **M1 骨架与事件入口**、**M2 单候选生成** 和 **M3 Mock 上游闭环**。
+- [x] 事件状态、event_key 幂等与 Session 并发锁（`4dfbcac`）
+- [x] AgentContext、AgentRunState 与唯一 ExecutionPlan（`151a3b8`）
+- [x] LLM 错误分类与显式重试（`626216c`）
+- [x] ToolRegistry 与受限 SubAgent（`ff32d4a`）
+- [x] Frontmatter Markdown Memory 与 keyword-only 索引（`a08e020`）
+- [x] ContextManager、ArtifactRef 与安全压缩（`cdf6861`）
+- [x] Static → Semantic → OutputContract 三层 Gate（`7329309`）
+- [x] HookManager、预算、安全、Trace 和受控重试（当前阶段）
+- [ ] 新 FAILED/SUCCESS 在线主链接入 AgentRunner
+- [ ] 删除旧固定 Workflow 在线入口并完成最终收敛
+
+上游系统负责执行 SQL、判定成功以及控制重试轮次；Agent 不执行 SQL，也不会把 `SQL_READY` 当作修复成功，真正成功只能由后续匹配当前候选的 `SUCCESS` 事件确认。
 
 ## 当前能力
 
@@ -33,6 +43,8 @@ SQL Self-Healing Agent 是一个事件驱动的 SQL 修复组件。
 - Memory Frontmatter Markdown、keyword-only 多关键词索引与 unknown 全量扫描
 - 仅当前候选被 SUCCESS 完全确认后写入成功经验
 - `memory list` CLI；不再保留旧 fingerprint 与 consolidation
+- HookManager 固定执行 Trace → Budget → Safety → Compression → Retry，结束阶段逆序清理
+- Tool、SubAgent、Gate、LLM 和 Context 摘要统一进入 Operation 生命周期；阻断、失败和超时也产生结束 Trace
 
 Validation 会阻断危险语句、写类型引入、WHERE 弱化、JOIN 条件变化、GROUP BY 粒度变化、INSERT 目标或静态分区变化，以及 RepairPlan 之外的修改。写类型 SQL 无法可靠确认时 fail-closed。
 
@@ -211,7 +223,7 @@ git diff --check
 当前二阶段测试基线：
 
 ```text
-Ran 112 tests
+Ran 120 tests
 OK
 ```
 
