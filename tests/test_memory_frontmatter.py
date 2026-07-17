@@ -51,3 +51,15 @@ class MemoryFrontmatterTest(unittest.TestCase):
             self.assertEqual(MemoryStore(directory).load_index(), {"unknown": [first]})
             (Path(directory) / "index/keyword_index.json").write_text("{}")
             self.assertEqual(MemoryStore(directory).rebuild_index(), {"unknown": [first]})
+
+
+class MemoryRetrievalPolicyTest(unittest.TestCase):
+    def test_unknown_scan_budget_warns(self) -> None:
+        from sql_self_healing_agent.memory.memory_retriever import MemoryRetriever
+        with tempfile.TemporaryDirectory() as tmp:
+            store=MemoryStore(tmp)
+            for index in range(3):
+                store.save_markdown(f"exp_{index}", f"---\nkeyword:\n  - unknown\ndescription: error item {index}\n---\nbody")
+            result=MemoryRetriever(tmp,unknown_scan_budget=2).retrieve_keywords(["unknown"],"error")
+            self.assertEqual(result.scanned_count,2)
+            self.assertIn("UNKNOWN_SCAN_BUDGET_EXCEEDED",result.warnings)

@@ -60,12 +60,16 @@ class MemoryWriterTest(unittest.TestCase):
             original = service.memory_writer.write_success_experience
             service.memory_writer.write_success_experience = lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disk fail"))
             first = service.handle_upstream_event(success)
-            self.assertEqual(first.status, "HUMAN_REQUIRED")
+            self.assertEqual(first.status, "SUCCESS_ACK")
             self.assertFalse((root / ".memory/experiences").exists())
+            session = json.loads((root / "sessions/sess_task_recover/session.json").read_text())
+            self.assertEqual(session["status"], "UPSTREAM_CONFIRMED_SUCCESS")
+            self.assertEqual(session["agent_terminal_status"], "SUCCEEDED")
+            self.assertEqual(session["upstream_events"][-1]["error_code"], "MEMORY_WRITE_DEGRADED")
             service.memory_writer.write_success_experience = original
             replay = service.handle_upstream_event(success)
             self.assertEqual(replay.status, "SUCCESS_ACK")
-            self.assertEqual(len(list((root / ".memory/experiences").glob("*.md"))), 1)
+            self.assertFalse((root / ".memory/experiences").exists())
 
     def test_duplicate_success_does_not_append_business_trace(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

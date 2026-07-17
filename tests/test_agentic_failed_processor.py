@@ -44,3 +44,18 @@ class AgenticFailedProcessorTest(unittest.TestCase):
             self.assertGreaterEqual(len(processor.context_manager.snapshots), 2)
             artifact_names = {path.name for path in (sessions / session.session_id / "attempts" / attempt.attempt_id / "artifacts").iterdir()}
             self.assertIn("snapshot_0001.json", artifact_names)
+
+
+    def test_unknown_diagnosis_may_run_one_governed_subagent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); sessions=root/".sessions"
+            store=SessionStore(sessions); artifacts=ArtifactStore(sessions)
+            event=UpstreamTaskEvent(id="unknown",status="FAILED",sql="SELECT 1",error_message="unclassified engine issue")
+            session=store.load_or_create_for_event(event); record=store.create_event_record(session,event); store.append_upstream_event(session,record); attempt=store.create_attempt(session,record)
+            vocab=json.loads((ROOT/"sql_self_healing_agent/logs/keyword_vocab.json").read_text())
+            provider=MockMetadataProvider(ROOT/"mocks/metadata/tables.json")
+            deps=ProcessorDependencies(vocab,provider,MemoryRetriever(root/".memory"),RepairPlanner(provider),SQLGenerator())
+            result,context,state,executor=AgenticFailedEventProcessor(deps,artifacts).run(event,session,attempt)
+            self.assertLessEqual(state.sub_agent_call_count,1)
+            if state.sub_agent_call_count:
+                self.assertIn("subagent_diagnosis",context.workspace)

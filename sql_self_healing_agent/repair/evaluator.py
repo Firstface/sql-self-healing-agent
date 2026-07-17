@@ -1,6 +1,8 @@
 from sql_self_healing_agent.core.enums import RiskLevel
 from sql_self_healing_agent.llm.llm_client import LLMClient, LLMClientError
 from sql_self_healing_agent.agent.llm import LLMAdapter
+from sql_self_healing_agent.agent.hooks import HookManager
+from sql_self_healing_agent.agent.llm import LLMCallContext
 from sql_self_healing_agent.llm.prompt_templates import (
     POST_REFLECTION_SYSTEM,
     PRE_REFLECTION_SYSTEM,
@@ -20,7 +22,14 @@ from sql_self_healing_agent.repair.reflection import (
 class RepairEvaluator:
     def __init__(self, client: LLMClient | None = None, adapter: LLMAdapter | None = None) -> None:
         self.client = client
-        self.adapter = adapter
+        self.adapter = (
+            adapter
+            or (
+                LLMAdapter(client, HookManager([]), LLMCallContext(session_id="standalone", attempt_id="standalone"))
+                if client is not None
+                else None
+            )
+        )
 
     def pre_reflect(
         self, reflection_input: PreReflectionInput
@@ -39,10 +48,11 @@ class RepairEvaluator:
         if self.client is not None:
             try:
                 prompt = structured_prompt(PRE_REFLECTION_SYSTEM, reflection_input, PreReflectionResult)
-                result = (
-                    self.adapter.generate_structured(prompt, PreReflectionResult, purpose="pre_reflection", input_summary="candidate semantic reflection")
-                    if self.adapter is not None
-                    else self.client.generate_structured(prompt, PreReflectionResult)
+                result = self.adapter.generate_structured(
+                    prompt,
+                    PreReflectionResult,
+                    purpose="pre_reflection",
+                    input_summary="candidate semantic reflection",
                 )
             except LLMClientError:
                 return PreReflectionResult(
@@ -99,10 +109,11 @@ class RepairEvaluator:
         if self.client is not None:
             try:
                 prompt = structured_prompt(POST_REFLECTION_SYSTEM, reflection_input, PostReflectionResult)
-                return (
-                    self.adapter.generate_structured(prompt, PostReflectionResult, purpose="post_reflection", input_summary="previous and current attempt reflection")
-                    if self.adapter is not None
-                    else self.client.generate_structured(prompt, PostReflectionResult)
+                return self.adapter.generate_structured(
+                    prompt,
+                    PostReflectionResult,
+                    purpose="post_reflection",
+                    input_summary="previous and current attempt reflection",
                 )
             except LLMClientError:
                 pass

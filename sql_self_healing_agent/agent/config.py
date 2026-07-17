@@ -12,6 +12,7 @@ class AgentConfig(BaseModel):
     sub_agent_limits: SubAgentLimits = Field(default_factory=SubAgentLimits)
     compaction_limits: CompactionLimits = Field(default_factory=CompactionLimits)
     memory_max_context_hits: int = Field(default=5, ge=1, le=20)
+    memory_unknown_scan_budget: int = Field(default=500, ge=1)
     llm_schema_retries: int = Field(default=1, ge=0, le=1)
     llm_transient_retries: int = Field(default=2, ge=0, le=2)
 

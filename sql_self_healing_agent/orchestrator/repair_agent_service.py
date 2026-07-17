@@ -47,7 +47,11 @@ class RepairAgentService:
         self.keyword_vocab = json.loads(Path(keyword_vocab_path or default_vocab).read_text(encoding="utf-8"))
         self.llm_client = llm_client
         self.llm_diagnoser = LLMDiagnoser(self.llm_client) if self.llm_client is not None else None
-        self.memory_retriever = MemoryRetriever(memory_dir, max_context_hits=self.agent_config.memory_max_context_hits)
+        self.memory_retriever = MemoryRetriever(
+            memory_dir,
+            max_context_hits=self.agent_config.memory_max_context_hits,
+            unknown_scan_budget=self.agent_config.memory_unknown_scan_budget,
+        )
         self.memory_writer = MemoryWriter(memory_dir)
         self.repair_planner = RepairPlanner(self.metadata_provider)
         self.sql_generator = SQLGenerator(self.llm_client)
@@ -256,6 +260,8 @@ class RepairAgentService:
                 )
                 attempt.stop_reason = run_result.reason or run_result.stop_reason
                 self.session_store.save_attempt(session, attempt)
+                session.agent_terminal_status = run_result.status
+                self.session_store.save_session(session)
                 if run_result.status == "NO_SQL":
                     return self._persist_external_result(session, attempt, self.external_results.no_sql(run_result.reason))
                 return self._human(session, attempt, run_result.reason or "Agent 无法安全生成候选 SQL。")
@@ -302,6 +308,7 @@ class RepairAgentService:
         attempt.status = AttemptStatus.HUMAN_REQUIRED
         attempt.updated_at = utc_now_iso()
         session.status = SessionStatus.HUMAN_REQUIRED
+        session.agent_terminal_status = "HUMAN_REQUIRED"
         session.updated_at = utc_now_iso()
         self.session_store.save_attempt(session, attempt)
         self.session_store.save_session(session)
@@ -339,6 +346,7 @@ class RepairAgentService:
                 matched_attempt.status = AttemptStatus.UPSTREAM_CONFIRMED_SUCCESS
                 matched_attempt.updated_at = utc_now_iso()
                 session.status = SessionStatus.UPSTREAM_CONFIRMED_SUCCESS
+                session.agent_terminal_status = "SUCCEEDED"
                 session.confirmed_sql = current_sql
                 session.confirmed_attempt_id = current_attempt_id
                 session.updated_at = utc_now_iso()
@@ -372,6 +380,18 @@ class RepairAgentService:
                 {"error_type": type(error).__name__},
                 matched_attempt.attempt_id,
             )
-            return self.external_results.human_required(
-                "上游成功已确认，但成功经验写入失败，请人工检查存储。"
+            with self.session_store.lock_for_task(event.id):
+                latest = self.session_store.load_for_task(event.id)
+                if latest is not None:
+                    record = self.session_store.find_event(latest, event_key)
+                    if record is not None:
+                        self.session_store.finish_event(
+                            latest,
+                            record,
+                            None,
+                            error_code="MEMORY_WRITE_DEGRADED",
+                            processing_status="SUCCEEDED",
+                        )
+            return self.external_results.success_ack(
+                "当前候选已确认成功；经验写入降级，等待后续补偿。"
             )

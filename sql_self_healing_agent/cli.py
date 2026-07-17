@@ -22,12 +22,8 @@ def run_handle_upstream_event(event_path: str) -> None:
 
 def run_mock_upstream_event(scenario_path: str) -> None:
     scenario = MockScenario.model_validate(read_json(Path(scenario_path)))
-    experience_dir = Path("memory_store/experiences")
-    before_experiences = (
-        {path.name for path in experience_dir.glob("*.json")}
-        if experience_dir.exists()
-        else set()
-    )
+    memory_store = MemoryStore()
+    before_experiences = set(memory_store.list_experience_ids())
     service = RepairAgentService(
         llm_client=build_llm_client_from_env(),
         allow_medium_risk=scenario.allow_medium_risk,
@@ -41,11 +37,7 @@ def run_mock_upstream_event(scenario_path: str) -> None:
     print(f"status: {result.status}")
     print(f"task_id: {result.task_id}")
     print(f"attempt_count: {result.attempt_count}")
-    after_experiences = (
-        {path.name for path in experience_dir.glob("*.json")}
-        if experience_dir.exists()
-        else set()
-    )
+    after_experiences = set(memory_store.list_experience_ids())
     memory_written = bool(after_experiences - before_experiences)
     print(f"memory_written: {str(memory_written).lower()}")
     if result.message:

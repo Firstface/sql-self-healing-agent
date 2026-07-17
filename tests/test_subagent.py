@@ -57,3 +57,13 @@ class SubAgentTest(unittest.TestCase):
         request=SubAgentRequest(task_name="diagnose_sql_error",objective="x",expected_output_schema="x")
         result=SubAgentRunner(worker).run(request,context())
         self.assertEqual(result.status,"HUMAN_REQUIRED")
+
+
+    def test_task_specs_are_differentiated(self) -> None:
+        from sql_self_healing_agent.agent.runner.subagent_task_spec import SubAgentTaskSpecRegistry
+        registry=SubAgentTaskSpecRegistry()
+        diagnosis=registry.get("diagnose_sql_error")
+        planning=registry.get("plan_sql_repair")
+        self.assertNotEqual(diagnosis.allowed_tools,planning.allowed_tools)
+        self.assertNotEqual(diagnosis.output_schema_name,planning.output_schema_name)
+        self.assertIn("log_digest",diagnosis.required_context_refs)

@@ -6,10 +6,11 @@ from sql_self_healing_agent.memory.memory_store import MemoryStore
 
 
 class MemoryRetriever:
-    def __init__(self, base_dir: Path | str = Path(".memory"), keyword_list: KeywordList | None = None, max_context_hits: int = 5) -> None:
+    def __init__(self, base_dir: Path | str = Path(".memory"), keyword_list: KeywordList | None = None, max_context_hits: int = 5, unknown_scan_budget: int = 500) -> None:
         self.store = MemoryStore(base_dir)
         self.keyword_list = keyword_list or KeywordList()
         self.max_context_hits = max_context_hits
+        self.unknown_scan_budget = unknown_scan_budget
 
     def retrieve_keywords(self, diagnosed_keywords: list[str], query_summary: str | None = None, limit: int | None = None) -> MemoryRetrievalResult:
         keywords = self.keyword_list.normalize(diagnosed_keywords)
@@ -17,6 +18,10 @@ class MemoryRetriever:
         all_ids = self.store.list_experience_ids()
         unknown = "unknown" in keywords
         candidate_ids = all_ids if unknown else sorted({experience_id for keyword in keywords for experience_id in index.get(keyword, [])})
+        warnings: list[str] = []
+        if unknown and len(candidate_ids) > self.unknown_scan_budget:
+            candidate_ids = candidate_ids[: self.unknown_scan_budget]
+            warnings.append("UNKNOWN_SCAN_BUDGET_EXCEEDED")
         matched: list[ExperienceSummary] = []
         scanned = 0
         query = (query_summary or "").casefold()
@@ -29,5 +34,19 @@ class MemoryRetriever:
                 relevant = not query or any(term in (frontmatter.description + " " + self.store.read_body(experience_id)).casefold() for term in query.split() if len(term) > 2)
             if relevant:
                 matched.append(ExperienceSummary(experience_id=experience_id, keyword=frontmatter.keyword, description=frontmatter.description, matched_by=matched_by or ["unknown"], artifact_ref=f"artifact://memory/{experience_id}"))
+        matched.sort(
+            key=lambda item: (
+                -len(item.matched_by),
+                -sum(1 for term in query.split() if len(term) > 2 and term in item.description.casefold()),
+                -self.store.experience_path(item.experience_id).stat().st_mtime_ns,
+                item.experience_id,
+            )
+        )
         final = matched[: min(limit or self.max_context_hits, self.max_context_hits)]
-        return MemoryRetrievalResult(matched=bool(final), matched_experiences=final, scanned_count=scanned, discarded_count=scanned - len(final))
+        return MemoryRetrievalResult(
+            matched=bool(final),
+            matched_experiences=final,
+            scanned_count=scanned,
+            discarded_count=scanned - len(final),
+            warnings=warnings,
+        )

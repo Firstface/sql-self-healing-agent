@@ -24,6 +24,7 @@ class MemoryRetrievalResult(StrictModel):
     scanned_count: int
     discarded_count: int
     artifact_ref: str | None = None
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ConfirmedExperienceInput(StrictModel):

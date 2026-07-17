@@ -5,6 +5,8 @@ from sqlglot import exp
 
 from sql_self_healing_agent.llm.llm_client import LLMClient, LLMClientError
 from sql_self_healing_agent.agent.llm import LLMAdapter
+from sql_self_healing_agent.agent.hooks import HookManager
+from sql_self_healing_agent.agent.llm import LLMCallContext
 from sql_self_healing_agent.llm.prompt_templates import SQL_GENERATOR_SYSTEM, structured_prompt
 from sql_self_healing_agent.repair.repair_models import (
     ChangedFragment,
@@ -28,7 +30,14 @@ _IDENTIFIER_ACTIONS = {
 class SQLGenerator:
     def __init__(self, client: LLMClient | None = None, adapter: LLMAdapter | None = None) -> None:
         self.client = client
-        self.adapter = adapter
+        self.adapter = (
+            adapter
+            or (
+                LLMAdapter(client, HookManager([]), LLMCallContext(session_id="standalone", attempt_id="standalone"))
+                if client is not None
+                else None
+            )
+        )
 
     def generate(
         self,
@@ -52,10 +61,11 @@ class SQLGenerator:
                     + "\nREGENERATION_INSTRUCTION_END"
                 )
             try:
-                result = (
-                    self.adapter.generate_structured(prompt, SQLGeneratorLLMOutput, purpose="sql_generation", input_summary="repair plan and failed SQL")
-                    if self.adapter is not None
-                    else self.client.generate_structured(prompt, SQLGeneratorLLMOutput)
+                result = self.adapter.generate_structured(
+                    prompt,
+                    SQLGeneratorLLMOutput,
+                    purpose="sql_generation",
+                    input_summary="repair plan and failed SQL",
                 )
             except LLMClientError:
                 return SQLGenerationResult(

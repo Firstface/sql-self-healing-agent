@@ -80,3 +80,14 @@ class HookManagerLifecycleTest(unittest.TestCase):
         with self.assertRaises(HookBlockedError): manager.execute_llm_call(lambda feedback:called.append(True),session_id="s",attempt_id="a",purpose="action",input_summary="please bypass gate")
         self.assertEqual(called,[])
         self.assertEqual(manager.operations[-1].error_code,"SAFETY_POLICY_BLOCKED")
+
+
+    def test_operation_type_caller_and_ownership_are_checked(self):
+        manager=HookManager([SafetyHook()])
+        with self.assertRaises(HookBlockedError):
+            manager.execute_operation(
+                manager.create_operation("SUB_AGENT_RUN","s","a","SUB_AGENT","x"),
+                lambda: "never",
+            )
+        with self.assertRaises(HookBlockedError):
+            manager.execute_tool_call(lambda:"never",session_id="s",attempt_id=None,purpose="x")

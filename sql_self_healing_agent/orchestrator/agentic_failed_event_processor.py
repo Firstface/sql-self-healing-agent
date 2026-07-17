@@ -16,6 +16,8 @@ from sql_self_healing_agent.agent.models.run_state import AgentRunLimits, AgentR
 from sql_self_healing_agent.agent.runner.agent_runner import AgentRunner
 from sql_self_healing_agent.agent.runner.agent_result import AgentRunResult
 from sql_self_healing_agent.agent.tools.tool_registry import ToolRegistry
+from sql_self_healing_agent.agent.models.subagent_models import SubAgentRequest, SubAgentResult
+from sql_self_healing_agent.agent.runner.subagent_runner import SubAgentRunner
 from sql_self_healing_agent.core.enums import DiagnosedErrorType
 from sql_self_healing_agent.core.time_utils import utc_now_iso
 from sql_self_healing_agent.diagnostics.diagnosis_fusion import DiagnosisFusion
@@ -39,6 +41,23 @@ class DeterministicMainAgent:
             return AgentAction(type="TOOL_CALL", tool_name="build_log_digest", tool_input={})
         if "diagnosis" not in context.workspace:
             return AgentAction(type="TOOL_CALL", tool_name="diagnose", tool_input={})
+        diagnosis = context.workspace.get("diagnosis")
+        if (
+            diagnosis is not None
+            and "UNKNOWN" in (diagnosis.summary or "")
+            and "subagent_diagnosis" not in context.workspace
+            and run_state.sub_agent_call_count == 0
+        ):
+            return AgentAction(
+                type="RUN_SUB_AGENT",
+                sub_agent_request=SubAgentRequest(
+                    task_name="diagnose_sql_error",
+                    objective="仅基于现有受控证据补充诊断建议，不生成或提交 SQL",
+                    context_refs=[],
+                    allowed_tools=[],
+                    expected_output_schema="DiagnosisResult",
+                ),
+            )
         if "metadata_snapshot" not in context.workspace:
             return AgentAction(type="TOOL_CALL", tool_name="query_metadata", tool_input={})
         if "memory_retrieval" not in context.workspace:
@@ -129,6 +148,32 @@ class AgenticActionExecutor:
         if action.type == "PROPOSE_SQL_CANDIDATE":
             summary = action.candidate_sql or ""
             return self._observation(action, "SUCCEEDED", summary, [])
+        if action.type == "RUN_SUB_AGENT" and action.sub_agent_request is not None:
+            runner = SubAgentRunner(
+                lambda request, view: SubAgentResult(
+                    status="SUCCEEDED",
+                    summary="SubAgent 已检查受控证据；结果仅作为诊断建议。",
+                    structured_output={"task_name": request.task_name},
+                )
+            )
+            result = (
+                self.hook_manager.execute_sub_agent(
+                    lambda: runner.run(action.sub_agent_request, context),
+                    session_id=context.session_id,
+                    attempt_id=context.attempt_id,
+                    purpose=action.sub_agent_request.task_name,
+                    input_summary="restricted context refs only",
+                )
+                if self.hook_manager is not None
+                else runner.run(action.sub_agent_request, context)
+            )
+            context.workspace["subagent_diagnosis"] = WorkspaceValue(
+                status="AVAILABLE" if result.status == "SUCCEEDED" else "FAILED",
+                summary=result.summary,
+                artifact_ref=result.artifact_ref,
+                updated_at=utc_now_iso(),
+            )
+            return self._observation(action, result.status, result.summary, ["subagent_diagnosis"])
         if action.type != "TOOL_CALL" or not action.tool_name:
             return self._observation(action, "BLOCKED", "unsupported action", [])
         registry_name = self.TOOL_NAMES.get(action.tool_name)
