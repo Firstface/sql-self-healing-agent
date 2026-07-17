@@ -11,6 +11,7 @@ from sql_self_healing_agent.core.time_utils import utc_now_iso
 from sql_self_healing_agent.orchestrator.external_result_factory import ExternalResultFactory
 from sql_self_healing_agent.orchestrator.agentic_failed_event_processor import AgenticFailedEventProcessor, ProcessorDependencies
 from sql_self_healing_agent.agent.hooks import BudgetHook, CompressionAdapterHook, HookManager, RetryAdapterHook, SafetyHook, TraceHook
+from sql_self_healing_agent.agent.llm import LLMAdapter, LLMCallContext
 from sql_self_healing_agent.diagnostics.llm_diagnoser import LLMDiagnoser
 from sql_self_healing_agent.diagnostics.diagnosis_models import DiagnosisResult
 from sql_self_healing_agent.metadata.metadata_models import MetadataSnapshot
@@ -48,7 +49,16 @@ class RepairAgentService:
         self.allow_medium_risk = allow_medium_risk
         self.evaluator = RepairEvaluator(self.llm_client)
         self.external_results = ExternalResultFactory()
-        self.hook_manager = HookManager([TraceHook(self.trace_writer), BudgetHook(), SafetyHook(), CompressionAdapterHook(), RetryAdapterHook()])
+
+    def _build_run_components(self, session_id: str, attempt_id: str):
+        hook_manager = HookManager([TraceHook(self.trace_writer), BudgetHook(), SafetyHook(), CompressionAdapterHook(), RetryAdapterHook()])
+        adapter = LLMAdapter(self.llm_client, hook_manager, LLMCallContext(session_id=session_id, attempt_id=attempt_id)) if self.llm_client is not None else None
+        return (
+            hook_manager,
+            LLMDiagnoser(self.llm_client, adapter) if self.llm_client is not None else None,
+            SQLGenerator(self.llm_client, adapter),
+            RepairEvaluator(self.llm_client, adapter),
+        )
 
     def handle_upstream_event(self, event: UpstreamTaskEvent) -> AgentExternalResult:
         if event.status == "FAILED":
@@ -125,17 +135,18 @@ class RepairAgentService:
             previous_attempt.updated_at = utc_now_iso()
             self.session_store.save_attempt(session, previous_attempt)
         try:
+            hook_manager, llm_diagnoser, sql_generator, evaluator = self._build_run_components(session.session_id, attempt.attempt_id)
             dependencies = ProcessorDependencies(
                 keyword_vocab=self.keyword_vocab,
                 metadata_provider=self.metadata_provider,
                 memory_retriever=self.memory_retriever,
                 repair_planner=self.repair_planner,
-                sql_generator=self.sql_generator,
-                llm_diagnoser=self.llm_diagnoser,
-                evaluator=self.evaluator,
+                sql_generator=sql_generator,
+                llm_diagnoser=llm_diagnoser,
+                evaluator=evaluator,
                 allow_medium_risk=self.allow_medium_risk,
             )
-            run_result, context, run_state, executor = AgenticFailedEventProcessor(dependencies, self.artifact_store, self.hook_manager).run(event, session, attempt)
+            run_result, context, run_state, executor = AgenticFailedEventProcessor(dependencies, self.artifact_store, hook_manager).run(event, session, attempt)
             attempt.agent_run_state_path = self.artifact_store.save_json(session.session_id, attempt.attempt_id, "agent_run_state.json", run_state.model_dump(mode="json"))
             for key, field in (("log_digest", "log_digest_path"), ("diagnosis", "diagnosis_path"), ("metadata_snapshot", "metadata_snapshot_path"), ("memory_retrieval", "memory_retrieval_path"), ("repair_plan", "repair_plan_path")):
                 workspace_value = context.workspace.get(key)
@@ -148,7 +159,7 @@ class RepairAgentService:
                 previous_plan = self._load_attempt_artifact(previous_attempt.repair_plan_path, RepairPlan)
                 current_log = executor.objects.get("log_digest")
                 if previous_diagnosis is not None and previous_plan is not None and current_log is not None and previous_attempt.sql_candidate:
-                    post = self.evaluator.post_reflect(PostReflectionInput(previous_attempt=previous_attempt, previous_diagnosis=previous_diagnosis, previous_repair_plan=previous_plan, previous_sql_candidate=previous_attempt.sql_candidate, current_failed_sql=event.sql, current_log_digest=current_log, current_diagnosis=diagnosis, diagnosis_history=session.diagnosis_history))
+                    post = evaluator.post_reflect(PostReflectionInput(previous_attempt=previous_attempt, previous_diagnosis=previous_diagnosis, previous_repair_plan=previous_plan, previous_sql_candidate=previous_attempt.sql_candidate, current_failed_sql=event.sql, current_log_digest=current_log, current_diagnosis=diagnosis, diagnosis_history=session.diagnosis_history))
                     post_ref = self.artifact_store.save_json_ref(session.session_id, attempt.attempt_id, "post_reflection_result.json", post.model_dump(mode="json"), "TRACE_PAYLOAD")
                     attempt.post_reflection_result_path = post_ref.model_dump_json()
             if diagnosis is not None:

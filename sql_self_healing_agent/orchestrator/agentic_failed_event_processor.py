@@ -7,7 +7,7 @@ from sql_self_healing_agent.agent.gates.gate_runner import GateRunner
 from sql_self_healing_agent.agent.models.action import AgentAction
 from sql_self_healing_agent.agent.models.context import AgentContext, WorkspaceValue
 from sql_self_healing_agent.agent.models.observation import Observation
-from sql_self_healing_agent.agent.models.run_state import AgentRunState
+from sql_self_healing_agent.agent.models.run_state import AgentRunLimits, AgentRunState
 from sql_self_healing_agent.agent.runner.agent_runner import AgentRunner
 from sql_self_healing_agent.agent.runner.agent_result import AgentRunResult
 from sql_self_healing_agent.core.enums import DiagnosedErrorType
@@ -185,7 +185,17 @@ class OnlineGateAdapter:
         context.candidate.draft_artifact_ref = ref.model_dump_json()
         context.candidate.gate_feedback.clear()
         repaired_request = request.model_copy(update={"candidate_sql": candidate, "candidate_artifact_ref": ref.model_dump_json()})
-        gate_result = self.gate_runner.run_repair(repaired_request, candidate, run_state)
+        gate_result = (
+            self.hook_manager.execute_gate(
+                lambda: self.gate_runner.run_repair(repaired_request, candidate, run_state),
+                session_id=context.session_id,
+                attempt_id=context.attempt_id,
+                purpose="candidate_gate_v2",
+                input_summary="regenerated candidate hash validated by GateRunner",
+            )
+            if self.hook_manager is not None
+            else self.gate_runner.run_repair(repaired_request, candidate, run_state)
+        )
         if gate_result.decision == "PASS":
             context.candidate.formal_sql = candidate
             context.candidate.status = "READY"
@@ -203,8 +213,16 @@ class AgenticFailedEventProcessor:
         from sql_self_healing_agent.agent.models.execution_plan import build_initial_execution_plan
         context=AgentContext(session_id=session.session_id,attempt_id=attempt.attempt_id,event_key=attempt.source_event_key,original_sql=event.sql,error_message=event.error_message,log_path=event.log_path,execution_plan=build_initial_execution_plan())
         state=AgentRunState(started_at=utc_now_iso())
+        limits=AgentRunLimits()
+        if self.hook_manager is not None:
+            from sql_self_healing_agent.agent.hooks.budget_hook import BudgetHook
+            budget_hooks = [hook for hook in self.hook_manager.hooks if isinstance(hook, BudgetHook)]
+            if len(budget_hooks) != 1:
+                raise RuntimeError("run-scoped HookManager must contain exactly one BudgetHook")
+            budget_hooks[0].run_state = state
+            budget_hooks[0].limits = limits
         executor=AgenticActionExecutor(self.dependencies,event,self.artifact_store,self.hook_manager)
         from sql_self_healing_agent.agent.gates.semantic_pre_reflection_gate import SemanticPreReflectionGate
         gate_runner = GateRunner(semantic_gate=SemanticPreReflectionGate(self.dependencies.evaluator))
-        result=AgentRunner(DeterministicMainAgent(),executor,OnlineGateAdapter(gate_runner,executor,self.hook_manager)).run(context,state)
+        result=AgentRunner(DeterministicMainAgent(),executor,OnlineGateAdapter(gate_runner,executor,self.hook_manager),limits).run(context,state)
         return result,context,state,executor

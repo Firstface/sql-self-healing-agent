@@ -48,6 +48,26 @@ class HandleUpstreamEventTest(unittest.TestCase):
             self.assertEqual(len(session["upstream_events"]), 2)
 
 
+class RunScopedLLMGovernanceTest(unittest.TestCase):
+    def test_production_llm_calls_are_traced_counted_and_isolated(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            service = RepairAgentService(root / "sessions", llm_client=FakeLLMClient(), metadata_path=Path(__file__).parents[1] / "mocks/metadata/tables.json")
+            for task_id in ("governed_1", "governed_2"):
+                event = UpstreamTaskEvent(id=task_id, status="FAILED", sql="SELECT user_id, pay_amt FROM dwd_order_detail WHERE date = ", error_message="Invalid column reference pay_amt")
+                self.assertEqual(service.handle_upstream_event(event).status, "SQL_READY")
+                session_dir = root / f"sessions/sess_{task_id}"
+                run_state = json.loads((session_dir / "artifacts/attempt_001/agent_run_state.json").read_text())
+                self.assertEqual(run_state["llm_call_count"], 3)
+                trace = [json.loads(line) for line in (session_dir / "trace.jsonl").read_text().splitlines()]
+                starts = [item for item in trace if item["event_type"] == "operation_started" and item["stage"] == "LLM_CALL"]
+                finishes = [item for item in trace if item["event_type"] == "operation_finished" and item["stage"] == "LLM_CALL"]
+                self.assertEqual([item["payload"]["purpose"] for item in starts], ["diagnosis", "sql_generation", "pre_reflection"])
+                self.assertEqual(len(finishes), 3)
+                serialized = "\n".join(json.dumps(item) for item in trace)
+                self.assertNotIn("JSON Schema:", serialized)
+                self.assertNotIn("<<<INPUT_START>>>", serialized)
+
 class GeneratorFailingClient:
     def generate_structured(self, prompt, response_model):
         if response_model is LLMDiagnosisResult:
@@ -129,6 +149,14 @@ class RegenerationFlowTest(unittest.TestCase):
             artifact_dir = root / "sessions/sess_task_regenerate/attempts/attempt_001/artifacts"
             self.assertTrue((artifact_dir / "candidate_v1.sql").exists())
             self.assertTrue((artifact_dir / "candidate_v2.sql").exists())
+            trace = [json.loads(line) for line in (root / "sessions/sess_task_regenerate/trace.jsonl").read_text().splitlines()]
+            starts = [item for item in trace if item["event_type"] == "operation_started"]
+            self.assertEqual(
+                [item["payload"]["purpose"] for item in starts if item["stage"] == "GATE_RUN"],
+                ["candidate_gate_v1", "candidate_gate_v2"],
+            )
+            run_state = json.loads((root / "sessions/sess_task_regenerate/artifacts/attempt_001/agent_run_state.json").read_text())
+            self.assertEqual(run_state["llm_call_count"], 5)
 
 
 class InsertCandidateClient(FakeLLMClient):

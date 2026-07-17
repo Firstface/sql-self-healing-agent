@@ -44,3 +44,5 @@ class BudgetHook:
     def after(self, operation: OperationContext, result: object | None, error: Exception | None) -> None:
         if operation.operation_type == "CONTEXT_COMPACTION" and operation.status == "SUCCEEDED":
             self.compaction_budget.call_count += 1
+        if self.run_state is not None and operation.operation_type == "LLM_CALL":
+            self.run_state.llm_call_count += 1
