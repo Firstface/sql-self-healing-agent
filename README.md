@@ -184,7 +184,9 @@ post_reflection_result.json
 external_result.json
 ```
 
-所有 JSON/Text Artifact 使用临时文件、`fsync` 和 `os.replace` 原子写入；`trace.jsonl` 为 append-only。
+所有 JSON/Text Artifact 使用临时文件、`fsync` 和 `os.replace` 原子写入；二阶段 ArtifactRef 同时记录 Session/Attempt 归属、哈希、大小和脱敏状态，跨 Session、未脱敏或哈希不一致的 Artifact 禁止读取。`trace.jsonl` 为 append-only。
+
+ContextManager 以唯一 `AgentContext` 为业务状态，为主 Agent、SubAgent 和 Gate 生成不同的临时只读视图。长内容仅以脱敏 ArtifactRef 进入 Context；压缩优先执行确定性裁剪，并保证原始 SQL、当前候选、Attempt、event_key、当前计划步骤和 Gate 阻断原因不被删除。摘要使用独立预算且禁止递归；关键字段无法恢复时安全收敛为 `HUMAN_REQUIRED`。
 
 ## Memory 检索与整理
 
@@ -204,10 +206,10 @@ python3.12 -m unittest discover -v
 git diff --check
 ```
 
-M4 当前测试基线：
+当前二阶段测试基线：
 
 ```text
-Ran 74 tests
+Ran 99 tests
 OK
 ```
 
