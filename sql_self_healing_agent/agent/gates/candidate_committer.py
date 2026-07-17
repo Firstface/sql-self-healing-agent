@@ -16,7 +16,7 @@ class CandidateCommitter:
         self.artifact_store = artifact_store
 
     def commit(self, session: RepairSession, attempt: RepairAttempt, candidate: CandidateState, gate_result: GateResult) -> None:
-        if candidate.status != "READY" or not candidate.formal_sql or gate_result.decision != "PASS":
+        if candidate.status != "READY" or not candidate.formal_sql or gate_result.decision not in {"PASS", "PASS_WITH_WARNING"}:
             raise ValueError("candidate is not ready for commit")
         if attempt.attempt_id != session.attempt_ids[-1] or attempt.source_event_key == "":
             raise ValueError("attempt ownership mismatch")
@@ -26,7 +26,7 @@ class CandidateCommitter:
         if not candidate.draft_artifact_ref:
             raise ValueError("candidate artifact is missing")
         ref = ArtifactRef.model_validate_json(candidate.draft_artifact_ref)
-        if ref.session_id != session.session_id or ref.attempt_id != attempt.attempt_id or not self.artifact_store.exists(ref):
+        if ref.session_id != session.session_id or ref.attempt_id != attempt.attempt_id or not ref.sanitized or not self.artifact_store.exists(ref):
             raise ValueError("candidate artifact is invalid")
         session.latest_sql_candidate = candidate.formal_sql
         session.latest_sql_candidate_attempt_id = attempt.attempt_id

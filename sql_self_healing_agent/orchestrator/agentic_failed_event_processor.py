@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict
 from uuid import uuid4
 
 from sql_self_healing_agent.agent.context import ContextManager
+from sql_self_healing_agent.agent.config import AgentConfig
 from sql_self_healing_agent.agent.gates.gate_models import GateRequest
 from sql_self_healing_agent.agent.gates.gate_runner import GateRunner
 from sql_self_healing_agent.agent.models.action import AgentAction
@@ -259,14 +260,15 @@ class OnlineGateAdapter:
 
 
 class AgenticFailedEventProcessor:
-    def __init__(self, dependencies: ProcessorDependencies, artifact_store, hook_manager=None) -> None:
+    def __init__(self, dependencies: ProcessorDependencies, artifact_store, hook_manager=None, config: AgentConfig | None = None) -> None:
         self.dependencies=dependencies; self.artifact_store=artifact_store; self.hook_manager=hook_manager
-        self.context_manager = ContextManager(artifact_store)
+        self.config = config or AgentConfig()
+        self.context_manager = ContextManager(artifact_store, compaction_limits=self.config.compaction_limits)
     def run(self,event,session,attempt) -> tuple[AgentRunResult,AgentContext,AgentRunState,AgenticActionExecutor]:
         from sql_self_healing_agent.agent.models.execution_plan import build_initial_execution_plan
         context=AgentContext(session_id=session.session_id,attempt_id=attempt.attempt_id,event_key=attempt.source_event_key,original_sql=event.sql,error_message=event.error_message,log_path=event.log_path,execution_plan=build_initial_execution_plan())
         state=AgentRunState(started_at=utc_now_iso())
-        limits=AgentRunLimits()
+        limits=self.config.run_limits
         if self.hook_manager is not None:
             from sql_self_healing_agent.agent.hooks.budget_hook import BudgetHook
             budget_hooks = [hook for hook in self.hook_manager.hooks if isinstance(hook, BudgetHook)]
@@ -284,6 +286,7 @@ class AgenticFailedEventProcessor:
         )
         from sql_self_healing_agent.agent.gates.semantic_pre_reflection_gate import SemanticPreReflectionGate
         gate_runner = GateRunner(semantic_gate=SemanticPreReflectionGate(self.dependencies.evaluator))
+        executor.gate_runner = gate_runner
         result=AgentRunner(DeterministicMainAgent(),executor,OnlineGateAdapter(gate_runner,executor,self.hook_manager),limits).run(context,state)
         self.context_manager.compact_if_needed(context, state)
         for snapshot in self.context_manager.snapshots:

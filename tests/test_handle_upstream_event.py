@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from sql_self_healing_agent.core.models import UpstreamTaskEvent
@@ -19,7 +20,10 @@ class HandleUpstreamEventTest(unittest.TestCase):
             log_path.write_text("SemanticException: Invalid column reference pay_amt\n")
             service = RepairAgentService(root / "sessions", llm_client=FakeLLMClient(), metadata_path=Path(__file__).parents[1] / "mocks/metadata/tables.json")
             event = UpstreamTaskEvent(id="task_123", status="FAILED", sql="SELECT user_id, pay_amt FROM dwd_order_detail WHERE date = ", error_message="Task failed", log_path=str(log_path))
-            result = service.handle_upstream_event(event)
+            from sql_self_healing_agent.agent.gates.candidate_committer import CandidateCommitter
+            with patch.object(CandidateCommitter, "commit", wraps=CandidateCommitter.commit, autospec=True) as commit:
+                result = service.handle_upstream_event(event)
+            self.assertEqual(commit.call_count, 1)
             self.assertEqual(result.status, "SQL_READY")
             self.assertEqual(result.sql, "SELECT user_id, payment_amount FROM dwd_order_detail WHERE date = ")
             self.assertEqual(service.handle_upstream_event(event), result)

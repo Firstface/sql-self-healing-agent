@@ -7,6 +7,10 @@ T = TypeVar("T")
 
 
 class LLMRetryHook:
+    def __init__(self, schema_retries: int = 1, transient_retries: int = 2) -> None:
+        self.max_schema_retries = schema_retries
+        self.max_transient_retries = transient_retries
+
     def run(self, operation: Callable[[str | None], T]) -> T:
         transient_retries = 0
         schema_retries = 0
@@ -15,11 +19,11 @@ class LLMRetryHook:
             try:
                 return operation(schema_feedback)
             except LLMClientError as error:
-                if error.error_type is LLMErrorType.SCHEMA_ERROR and schema_retries < 1:
+                if error.error_type is LLMErrorType.SCHEMA_ERROR and schema_retries < self.max_schema_retries:
                     schema_retries += 1
                     schema_feedback = "上一次输出未通过结构化 Schema，仅返回合法 JSON。"
                     continue
-                if error.error_type in {LLMErrorType.TRANSIENT_ERROR, LLMErrorType.TIMEOUT, LLMErrorType.SERVICE_ERROR} and transient_retries < 2:
+                if error.error_type in {LLMErrorType.TRANSIENT_ERROR, LLMErrorType.TIMEOUT, LLMErrorType.SERVICE_ERROR} and transient_retries < self.max_transient_retries:
                     transient_retries += 1
                     continue
                 raise

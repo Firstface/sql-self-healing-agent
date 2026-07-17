@@ -1,4 +1,5 @@
 import json
+from threading import Lock
 from pathlib import Path
 
 from sql_self_healing_agent.artifacts.artifact_store import ArtifactStore
@@ -12,6 +13,9 @@ from sql_self_healing_agent.orchestrator.external_result_factory import External
 from sql_self_healing_agent.orchestrator.agentic_failed_event_processor import AgenticFailedEventProcessor, ProcessorDependencies
 from sql_self_healing_agent.agent.hooks import BudgetHook, CompressionAdapterHook, HookManager, RetryAdapterHook, SafetyHook, TraceHook
 from sql_self_healing_agent.agent.llm import LLMAdapter, LLMCallContext
+from sql_self_healing_agent.agent.gates.candidate_committer import CandidateCommitter
+from sql_self_healing_agent.agent.config import AgentConfig
+from sql_self_healing_agent.llm.retry_hook import LLMRetryHook
 from sql_self_healing_agent.diagnostics.llm_diagnoser import LLMDiagnoser
 from sql_self_healing_agent.diagnostics.diagnosis_models import DiagnosisResult
 from sql_self_healing_agent.metadata.metadata_models import MetadataSnapshot
@@ -32,7 +36,8 @@ from sql_self_healing_agent.trace.trace_writer import TraceWriter
 
 
 class RepairAgentService:
-    def __init__(self, sessions_dir: Path | str = Path(".sessions"), llm_client: LLMClient | None = None, metadata_path: Path | str = Path("mocks/metadata/tables.json"), keyword_vocab_path: Path | str | None = None, allow_medium_risk: bool = False, memory_dir: Path | str = Path(".memory")) -> None:
+    def __init__(self, sessions_dir: Path | str = Path(".sessions"), llm_client: LLMClient | None = None, metadata_path: Path | str = Path("mocks/metadata/tables.json"), keyword_vocab_path: Path | str | None = None, allow_medium_risk: bool = False, memory_dir: Path | str = Path(".memory"), agent_config: AgentConfig | None = None) -> None:
+        self.agent_config = agent_config or AgentConfig()
         self.session_store = SessionStore(sessions_dir)
         self.trace_writer = TraceWriter(sessions_dir)
         self.artifact_store = ArtifactStore(sessions_dir)
@@ -42,16 +47,24 @@ class RepairAgentService:
         self.keyword_vocab = json.loads(Path(keyword_vocab_path or default_vocab).read_text(encoding="utf-8"))
         self.llm_client = llm_client
         self.llm_diagnoser = LLMDiagnoser(self.llm_client) if self.llm_client is not None else None
-        self.memory_retriever = MemoryRetriever(memory_dir)
+        self.memory_retriever = MemoryRetriever(memory_dir, max_context_hits=self.agent_config.memory_max_context_hits)
         self.memory_writer = MemoryWriter(memory_dir)
         self.repair_planner = RepairPlanner(self.metadata_provider)
         self.sql_generator = SQLGenerator(self.llm_client)
         self.allow_medium_risk = allow_medium_risk
         self.evaluator = RepairEvaluator(self.llm_client)
         self.external_results = ExternalResultFactory()
+        self._active_event_keys: set[str] = set()
+        self._active_event_keys_lock = Lock()
 
     def _build_run_components(self, session_id: str, attempt_id: str):
-        hook_manager = HookManager([TraceHook(self.trace_writer), BudgetHook(), SafetyHook(), CompressionAdapterHook(), RetryAdapterHook()])
+        hook_manager = HookManager(
+            [TraceHook(self.trace_writer), BudgetHook(limits=self.agent_config.run_limits), SafetyHook(), CompressionAdapterHook(), RetryAdapterHook()],
+            retry_hook=LLMRetryHook(
+                schema_retries=self.agent_config.llm_schema_retries,
+                transient_retries=self.agent_config.llm_transient_retries,
+            ),
+        )
         adapter = LLMAdapter(self.llm_client, hook_manager, LLMCallContext(session_id=session_id, attempt_id=attempt_id)) if self.llm_client is not None else None
         return (
             hook_manager,
@@ -92,9 +105,62 @@ class RepairAgentService:
             return AgentExternalResult.model_validate(read_json(Path(record.result_ref)))
         return None
 
+    def _recover_failed_event(self, session: RepairSession, record):
+        if not record.attempt_id:
+            self.session_store.finish_event(
+                session, record, None, error_code="RECOVERY_ATTEMPT_MISSING", processing_status="SYSTEM_ERROR"
+            )
+            return self.external_results.human_required("事件恢复失败：Attempt 缺失。")
+        attempt = self.session_store.load_attempt(session, record.attempt_id)
+        if attempt.status == AttemptStatus.SQL_READY and attempt.sql_candidate:
+            return self._persist_external_result(
+                session, attempt, self.external_results.sql_ready(attempt.sql_candidate)
+            )
+        if attempt.status in {
+            AttemptStatus.HUMAN_REQUIRED,
+            AttemptStatus.VALIDATION_BLOCKED,
+            AttemptStatus.REFLECTION_BLOCKED,
+        }:
+            message = attempt.stop_reason or "历史 Attempt 已终止，需要人工处理。"
+            return self._persist_external_result(
+                session, attempt, self.external_results.human_required(message)
+            )
+        stage_refs = (
+            attempt.agent_run_state_path,
+            attempt.log_digest_path,
+            attempt.diagnosis_path,
+            attempt.metadata_snapshot_path,
+            attempt.memory_retrieval_path,
+            attempt.repair_plan_path,
+            attempt.sql_candidate_path,
+        )
+        if attempt.status == AttemptStatus.CREATED and not any(stage_refs):
+            self.trace_writer.emit(
+                session.session_id,
+                "event_recovery_resumed",
+                "orchestrator",
+                {"attempt_id": attempt.attempt_id},
+                attempt.attempt_id,
+            )
+            return None
+        attempt.status = AttemptStatus.HUMAN_REQUIRED
+        attempt.stop_reason = "RECOVERY_PARTIAL_STATE_UNSAFE"
+        attempt.updated_at = utc_now_iso()
+        self.session_store.save_attempt(session, attempt)
+        self.session_store.finish_event(
+            session,
+            record,
+            None,
+            error_code="RECOVERY_PARTIAL_STATE_UNSAFE",
+            processing_status="SYSTEM_ERROR",
+        )
+        return self.external_results.human_required("事件存在无法安全续跑的部分状态，已终止并等待人工处理。")
+
     def _persist_external_result(
         self, session: RepairSession, attempt, result: AgentExternalResult
     ) -> AgentExternalResult:
+        with self._active_event_keys_lock:
+            self._active_event_keys.discard(attempt.source_event_key)
         result_ref = self.artifact_store.save_json(
             session.session_id,
             attempt.attempt_id,
@@ -114,12 +180,25 @@ class RepairAgentService:
             with self.session_store.lock_for_task(event.id):
                 session = self.session_store.load_or_create_for_event(event)
                 existing = self.session_store.find_event(session, build_event_key(event))
+                event_key = build_event_key(event)
                 if existing is not None:
                     processed = self._load_processed_failed_result(session, event)
-                    return processed or self.external_results.human_required("该事件正在处理或需要从持久化状态恢复。")
-                record = self.session_store.create_event_record(session, event)
-                self.session_store.append_upstream_event(session, record)
-                attempt = self.session_store.create_attempt(session, record)
+                    if processed is not None:
+                        return processed
+                    with self._active_event_keys_lock:
+                        if event_key in self._active_event_keys:
+                            return self.external_results.human_required("该事件正在处理中，请稍后重试。")
+                    recovered = self._recover_failed_event(session, existing)
+                    if recovered is not None:
+                        return recovered
+                    record = existing
+                    attempt = self.session_store.load_attempt(session, record.attempt_id)
+                else:
+                    record = self.session_store.create_event_record(session, event)
+                    self.session_store.append_upstream_event(session, record)
+                    attempt = self.session_store.create_attempt(session, record)
+                with self._active_event_keys_lock:
+                    self._active_event_keys.add(event_key)
                 session.status = SessionStatus.RUNNING
                 session.updated_at = utc_now_iso()
                 self.session_store.save_session(session)
@@ -146,7 +225,7 @@ class RepairAgentService:
                 evaluator=evaluator,
                 allow_medium_risk=self.allow_medium_risk,
             )
-            run_result, context, run_state, executor = AgenticFailedEventProcessor(dependencies, self.artifact_store, hook_manager).run(event, session, attempt)
+            run_result, context, run_state, executor = AgenticFailedEventProcessor(dependencies, self.artifact_store, hook_manager, self.agent_config).run(event, session, attempt)
             attempt.agent_run_state_path = self.artifact_store.save_json(session.session_id, attempt.attempt_id, "agent_run_state.json", run_state.model_dump(mode="json"))
             for key, field in (("log_digest", "log_digest_path"), ("diagnosis", "diagnosis_path"), ("metadata_snapshot", "metadata_snapshot_path"), ("memory_retrieval", "memory_retrieval_path"), ("repair_plan", "repair_plan_path")):
                 workspace_value = context.workspace.get(key)
@@ -192,12 +271,14 @@ class RepairAgentService:
                 current = self.session_store.find_event(latest, attempt.source_event_key)
                 if current is None or current.attempt_id != attempt.attempt_id:
                     return self._human(session, attempt, "事件状态已变化，无法安全提交候选 SQL。")
-                latest.latest_sql_candidate = run_result.candidate_sql
-                latest.latest_sql_candidate_attempt_id = attempt.attempt_id
-                latest.status = SessionStatus.SQL_READY_PENDING_UPSTREAM
-                latest.updated_at = utc_now_iso()
+                gate_result = executor.gate_runner.last_result
+                if gate_result is None:
+                    return self._human(session, attempt, "Gate 结果丢失，无法安全提交候选 SQL。")
+                CandidateCommitter(self.session_store, self.artifact_store).commit(
+                    latest, attempt, context.candidate, gate_result
+                )
+                attempt.sql_candidate_path = run_result.candidate_artifact_ref
                 self.session_store.save_attempt(latest, attempt)
-                self.session_store.save_session(latest)
                 session = latest
             return self._persist_external_result(session, attempt, self.external_results.sql_ready(run_result.candidate_sql))
         except SessionLockTimeout:
