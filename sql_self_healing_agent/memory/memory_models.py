@@ -36,3 +36,17 @@ class ConfirmedExperienceInput(StrictModel):
     description: str
     modification_summary: str
     error_summary: str = ""
+
+
+class ConsolidationGroup(StrictModel):
+    canonical_id: str
+    member_ids: list[str]
+    reason: str
+
+
+class ConsolidationReport(StrictModel):
+    scanned_count: int
+    duplicate_group_count: int
+    merged_count: int
+    groups: list[ConsolidationGroup] = Field(default_factory=list)
+    dry_run: bool = True

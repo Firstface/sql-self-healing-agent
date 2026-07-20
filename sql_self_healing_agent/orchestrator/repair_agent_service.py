@@ -69,6 +69,7 @@ class RepairAgentService:
         adapter = LLMAdapter(self.llm_client, hook_manager, LLMCallContext(session_id=session_id, attempt_id=attempt_id)) if self.llm_client is not None else None
         return (
             hook_manager,
+            adapter if self.agent_config.llm_main_agent_enabled else None,
             LLMDiagnoser(self.llm_client, adapter) if self.llm_client is not None else None,
             SQLGenerator(self.llm_client, adapter),
             RepairEvaluator(self.llm_client, adapter),
@@ -76,6 +77,8 @@ class RepairAgentService:
 
     def handle_upstream_event(self, event: UpstreamTaskEvent) -> AgentExternalResult:
         if event.status == "FAILED":
+            if not self.agent_config.agentic_enabled:
+                return self.external_results.human_required("Agent 编排已通过确定性回滚开关关闭。")
             return self._handle_failed_event(event)
         if event.status == "SUCCESS":
             try:
@@ -215,7 +218,7 @@ class RepairAgentService:
             previous_attempt.updated_at = utc_now_iso()
             self.session_store.save_attempt(session, previous_attempt)
         try:
-            hook_manager, llm_diagnoser, sql_generator, evaluator = self._build_run_components(session.session_id, attempt.attempt_id)
+            hook_manager, llm_adapter, llm_diagnoser, sql_generator, evaluator = self._build_run_components(session.session_id, attempt.attempt_id)
             dependencies = ProcessorDependencies(
                 keyword_vocab=self.keyword_vocab,
                 metadata_provider=self.metadata_provider,
@@ -226,7 +229,7 @@ class RepairAgentService:
                 evaluator=evaluator,
                 allow_medium_risk=self.allow_medium_risk,
             )
-            run_result, context, run_state, executor = AgenticFailedEventProcessor(dependencies, self.artifact_store, hook_manager, self.agent_config).run(event, session, attempt)
+            run_result, context, run_state, executor = AgenticFailedEventProcessor(dependencies, self.artifact_store, hook_manager, self.agent_config, llm_adapter).run(event, session, attempt)
             attempt.agent_run_state_path = self.artifact_store.save_json(session.session_id, attempt.attempt_id, "agent_run_state.json", run_state.model_dump(mode="json"))
             for key, field in (("log_digest", "log_digest_path"), ("diagnosis", "diagnosis_path"), ("metadata_snapshot", "metadata_snapshot_path"), ("memory_retrieval", "memory_retrieval_path"), ("repair_plan", "repair_plan_path")):
                 workspace_value = context.workspace.get(key)

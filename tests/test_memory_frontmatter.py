@@ -61,5 +61,5 @@ class MemoryRetrievalPolicyTest(unittest.TestCase):
             for index in range(3):
                 store.save_markdown(f"exp_{index}", f"---\nkeyword:\n  - unknown\ndescription: error item {index}\n---\nbody")
             result=MemoryRetriever(tmp,unknown_scan_budget=2).retrieve_keywords(["unknown"],"error")
-            self.assertEqual(result.scanned_count,2)
-            self.assertIn("UNKNOWN_SCAN_BUDGET_EXCEEDED",result.warnings)
+            self.assertEqual(result.scanned_count,3)
+            self.assertIn("UNKNOWN_SCAN_BUDGET_THRESHOLD_EXCEEDED",result.warnings)

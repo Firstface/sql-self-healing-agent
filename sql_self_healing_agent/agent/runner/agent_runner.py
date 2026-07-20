@@ -9,6 +9,7 @@ from sql_self_healing_agent.agent.models.context import AgentContext
 from sql_self_healing_agent.agent.models.observation import Observation
 from sql_self_healing_agent.agent.models.run_state import AgentRunLimits, AgentRunState
 from sql_self_healing_agent.agent.planning.progress_detector import ProgressDetector
+from sql_self_healing_agent.agent.planning.execution_plan_updater import ExecutionPlanUpdater
 from sql_self_healing_agent.agent.runner.agent_result import AgentRunResult
 from sql_self_healing_agent.core.time_utils import utc_now_iso
 
@@ -26,11 +27,13 @@ class CandidateGate(Protocol):
 
 
 class AgentRunner:
-    def __init__(self, main_agent: MainAgent, action_executor: ActionExecutor, candidate_gate: CandidateGate, limits: AgentRunLimits | None = None) -> None:
+    def __init__(self, main_agent: MainAgent, action_executor: ActionExecutor, candidate_gate: CandidateGate, limits: AgentRunLimits | None = None, context_manager=None) -> None:
         self.main_agent = main_agent
         self.action_executor = action_executor
         self.candidate_gate = candidate_gate
         self.limits = limits or AgentRunLimits()
+        self.context_manager = context_manager
+        self.plan_updater = ExecutionPlanUpdater()
 
     def run(self, context: AgentContext, run_state: AgentRunState) -> AgentRunResult:
         started = time.monotonic()
@@ -40,7 +43,10 @@ class AgentRunner:
             if stop_reason:
                 return self._stop(run_state, context, stop_reason)
             try:
-                action = self.main_agent.next_action(context, run_state)
+                if self.context_manager:
+                    self.context_manager.compact_if_needed(context, run_state)
+                main_input = self.context_manager.prepare_for_main_agent(context, run_state, limits=self.limits) if self.context_manager else context
+                action = self.main_agent.next_action(main_input, run_state)
                 if not isinstance(action, AgentAction):
                     action = AgentAction.model_validate(action)
             except (ValidationError, ValueError, TypeError):
@@ -65,10 +71,13 @@ class AgentRunner:
             context.recent_observations.append(observation)
             context.last_action = action
             run_state.no_progress_steps = 0 if progress else run_state.no_progress_steps + 1
+            self.plan_updater.apply_observation(context.execution_plan, observation)
             if action.type == "TOOL_CALL":
                 run_state.tool_call_count += 1
             elif action.type == "RUN_SUB_AGENT":
                 run_state.sub_agent_call_count += 1
+            elif action.type == "UPDATE_PLAN":
+                context.execution_plan = self.plan_updater.replace(context.execution_plan, action.execution_plan, run_state, self.limits)
             if action.type == "PROPOSE_SQL_CANDIDATE":
                 context.candidate.draft_sql = action.candidate_sql
                 context.candidate.status = "DRAFT"

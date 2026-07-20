@@ -68,7 +68,7 @@ logs/
 03_agentic_rag_design.md
 04_agentic_rag_final_detailed.md
 05_agentic_rag_final_implementation_design.md
-
+PROJECT_WALKTHROUGH.md
 
 # Versioned deterministic Mock upstream fixtures
 !mocks/logs/

@@ -20,8 +20,7 @@ class MemoryRetriever:
         candidate_ids = all_ids if unknown else sorted({experience_id for keyword in keywords for experience_id in index.get(keyword, [])})
         warnings: list[str] = []
         if unknown and len(candidate_ids) > self.unknown_scan_budget:
-            candidate_ids = candidate_ids[: self.unknown_scan_budget]
-            warnings.append("UNKNOWN_SCAN_BUDGET_EXCEEDED")
+            warnings.append("UNKNOWN_SCAN_BUDGET_THRESHOLD_EXCEEDED")
         matched: list[ExperienceSummary] = []
         scanned = 0
         query = (query_summary or "").casefold()

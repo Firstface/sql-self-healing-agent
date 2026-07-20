@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict
 from uuid import uuid4
 
 from sql_self_healing_agent.agent.context import ContextManager
+from sql_self_healing_agent.agent.context.context_models import MainAgentInput, ContextSummary
 from sql_self_healing_agent.agent.config import AgentConfig
 from sql_self_healing_agent.agent.gates.gate_models import GateRequest
 from sql_self_healing_agent.agent.gates.gate_runner import GateRunner
@@ -36,16 +37,17 @@ from sql_self_healing_agent.repair.sql_generator import SQLGenerator
 class DeterministicMainAgent:
     """Chooses the next action from evidence availability; it does not run the workflow itself."""
 
-    def next_action(self, context: AgentContext, run_state: AgentRunState) -> AgentAction:
-        if "log_digest" not in context.workspace:
+    def next_action(self, context: AgentContext | MainAgentInput, run_state: AgentRunState) -> AgentAction:
+        workspace = context.workspace if isinstance(context, AgentContext) else context.workspace_summaries
+        if "log_digest" not in workspace:
             return AgentAction(type="TOOL_CALL", tool_name="build_log_digest", tool_input={})
-        if "diagnosis" not in context.workspace:
+        if "diagnosis" not in workspace:
             return AgentAction(type="TOOL_CALL", tool_name="diagnose", tool_input={})
-        diagnosis = context.workspace.get("diagnosis")
+        diagnosis = workspace.get("diagnosis")
         if (
             diagnosis is not None
-            and "UNKNOWN" in (diagnosis.summary or "")
-            and "subagent_diagnosis" not in context.workspace
+            and "UNKNOWN" in ((diagnosis.summary if hasattr(diagnosis, "summary") else str(diagnosis)) or "")
+            and "subagent_diagnosis" not in workspace
             and run_state.sub_agent_call_count == 0
         ):
             return AgentAction(
@@ -58,16 +60,18 @@ class DeterministicMainAgent:
                     expected_output_schema="DiagnosisResult",
                 ),
             )
-        if "metadata_snapshot" not in context.workspace:
+        if "metadata_snapshot" not in workspace:
             return AgentAction(type="TOOL_CALL", tool_name="query_metadata", tool_input={})
-        if "memory_retrieval" not in context.workspace:
+        if "memory_retrieval" not in workspace:
             return AgentAction(type="TOOL_CALL", tool_name="retrieve_memory", tool_input={})
-        if "repair_plan" not in context.workspace:
+        if "repair_plan" not in workspace:
             return AgentAction(type="TOOL_CALL", tool_name="build_repair_plan", tool_input={})
-        if "candidate_sql" not in context.workspace:
+        if "candidate_sql" not in workspace:
             return AgentAction(type="TOOL_CALL", tool_name="generate_candidate", tool_input={})
-        candidate = context.workspace["candidate_sql"].summary
-        if not candidate:
+        candidate = (context.workspace["candidate_sql"].summary if isinstance(context, AgentContext) else workspace["candidate_sql"])
+        if not isinstance(context, AgentContext) and candidate == "FAILED":
+            candidate = None
+        if not candidate or candidate == "None":
             return AgentAction(type="RETURN_HUMAN_REQUIRED", reason="无法安全生成候选 SQL。")
         return AgentAction(type="PROPOSE_SQL_CANDIDATE", candidate_sql=candidate)
 
@@ -122,11 +126,13 @@ class AgenticActionExecutor:
         "generate_candidate": "GenerateCandidateTool",
     }
 
-    def __init__(self, dependencies: ProcessorDependencies, event, artifact_store, hook_manager=None) -> None:
+    def __init__(self, dependencies: ProcessorDependencies, event, artifact_store, hook_manager=None, context_manager=None, llm_adapter=None) -> None:
         self.deps = dependencies
         self.event = event
         self.artifact_store = artifact_store
         self.hook_manager = hook_manager
+        self.context_manager = context_manager
+        self.llm_adapter = llm_adapter
         self.log_compressor = LogCompressor()
         self.rule_classifier = RuleClassifier()
         self.fusion = DiagnosisFusion()
@@ -149,13 +155,17 @@ class AgenticActionExecutor:
             summary = action.candidate_sql or ""
             return self._observation(action, "SUCCEEDED", summary, [])
         if action.type == "RUN_SUB_AGENT" and action.sub_agent_request is not None:
-            runner = SubAgentRunner(
-                lambda request, view: SubAgentResult(
-                    status="SUCCEEDED",
-                    summary="SubAgent 已检查受控证据；结果仅作为诊断建议。",
-                    structured_output={"task_name": request.task_name},
+            def subagent_worker(request, view):
+                if self.llm_adapter is None:
+                    return SubAgentResult(status="SUCCEEDED", summary="SubAgent 已检查受控证据；结果仅作为诊断建议。", structured_output={"task_name": request.task_name})
+                from sql_self_healing_agent.agent.runner.subagent_runner import SubAgentAction
+                return self.llm_adapter.generate_structured(
+                    "你是受限 SubAgent。只能使用允许的工具和受控视图，禁止递归、提交 SQL、修改父状态。输入：" + json.dumps(view, ensure_ascii=False, default=str),
+                    SubAgentAction,
+                    purpose=f"subagent_{request.task_name}",
+                    input_summary="controlled SubAgentInput",
                 )
-            )
+            runner = SubAgentRunner(subagent_worker, tool_registry=self.tool_registry, context_manager=self.context_manager)
             result = (
                 self.hook_manager.execute_sub_agent(
                     lambda: runner.run(action.sub_agent_request, context),
@@ -255,14 +265,16 @@ class AgenticActionExecutor:
 
     @staticmethod
     def _observation(action,status,summary,keys):
-        return Observation(observation_id=f"obs_{uuid4().hex}",action_type=action.type,status=status,summary=summary,produced_workspace_keys=keys,created_at=utc_now_iso())
+        step_map = {"build_log_digest":"read_log", "diagnose":"diagnose", "query_metadata":"query_metadata", "retrieve_memory":"retrieve_memory", "build_repair_plan":"generate_candidate", "generate_candidate":"generate_candidate"}
+        return Observation(observation_id=f"obs_{uuid4().hex}",action_type=action.type,status=status,summary=summary,produced_workspace_keys=keys,plan_step_id=step_map.get(action.tool_name) if action.type == "TOOL_CALL" else "gate_candidate" if action.type == "PROPOSE_SQL_CANDIDATE" else None,created_at=utc_now_iso())
 
 
 class OnlineGateAdapter:
-    def __init__(self, gate_runner: GateRunner, executor: AgenticActionExecutor, hook_manager=None) -> None:
-        self.gate_runner=gate_runner; self.executor=executor; self.hook_manager=hook_manager
+    def __init__(self, gate_runner: GateRunner, executor: AgenticActionExecutor, hook_manager=None, context_manager=None) -> None:
+        self.gate_runner=gate_runner; self.executor=executor; self.hook_manager=hook_manager; self.context_manager=context_manager
     def run(self, context: AgentContext, run_state: AgentRunState) -> AgentRunResult:
-        request=GateRequest(original_sql=context.original_sql,candidate_sql=context.candidate.draft_sql or "",diagnosis=self.executor.objects["diagnosis"],metadata_snapshot=self.executor.objects.get("metadata_snapshot"),memory_retrieval=self.executor.objects.get("memory_retrieval"),existing_plan=self.executor.objects.get("repair_plan"),candidate_artifact_ref=context.candidate.draft_artifact_ref,attempt_id=context.attempt_id,event_key=context.event_key,allow_medium_risk=self.executor.deps.allow_medium_risk)
+        evidence = self.context_manager.prepare_for_gate(context) if self.context_manager else None
+        request=GateRequest(original_sql=evidence.original_sql if evidence else context.original_sql,candidate_sql=evidence.candidate_sql if evidence else context.candidate.draft_sql or "",diagnosis=self.executor.objects["diagnosis"],metadata_snapshot=self.executor.objects.get("metadata_snapshot"),memory_retrieval=self.executor.objects.get("memory_retrieval"),existing_plan=self.executor.objects.get("repair_plan"),candidate_artifact_ref=context.candidate.draft_artifact_ref,attempt_id=evidence.attempt_id if evidence else context.attempt_id,event_key=evidence.event_key if evidence else context.event_key,allow_medium_risk=self.executor.deps.allow_medium_risk)
         first = (
             self.hook_manager.execute_gate(lambda: self.gate_runner.run(context, run_state, request), session_id=context.session_id, attempt_id=context.attempt_id, purpose="candidate_gate_v1", input_summary="candidate hash validated by GateRunner")
             if self.hook_manager is not None
@@ -305,10 +317,24 @@ class OnlineGateAdapter:
 
 
 class AgenticFailedEventProcessor:
-    def __init__(self, dependencies: ProcessorDependencies, artifact_store, hook_manager=None, config: AgentConfig | None = None) -> None:
+    def __init__(self, dependencies: ProcessorDependencies, artifact_store, hook_manager=None, config: AgentConfig | None = None, llm_adapter=None) -> None:
         self.dependencies=dependencies; self.artifact_store=artifact_store; self.hook_manager=hook_manager
         self.config = config or AgentConfig()
-        self.context_manager = ContextManager(artifact_store, compaction_limits=self.config.compaction_limits)
+        self.llm_adapter = llm_adapter
+        def summarize(payload, limits):
+            if self.llm_adapter is None:
+                raise RuntimeError("summary LLM unavailable")
+            return self.hook_manager.execute_compaction(
+                lambda feedback: self.llm_adapter.client.generate_structured(
+                    "只总结现有事实，不得修改任何安全关键字段：" + json.dumps(payload, ensure_ascii=False, default=str),
+                    ContextSummary,
+                ),
+                session_id=str(payload.get("session_id", "")),
+                attempt_id=str(payload.get("attempt_id", "")),
+                purpose="context_summary",
+                input_summary="controlled context snapshot",
+            )
+        self.context_manager = ContextManager(artifact_store, compaction_limits=self.config.compaction_limits, summary_callable=summarize if llm_adapter is not None else None)
     def run(self,event,session,attempt) -> tuple[AgentRunResult,AgentContext,AgentRunState,AgenticActionExecutor]:
         from sql_self_healing_agent.agent.models.execution_plan import build_initial_execution_plan
         context=AgentContext(session_id=session.session_id,attempt_id=attempt.attempt_id,event_key=attempt.source_event_key,original_sql=event.sql,error_message=event.error_message,log_path=event.log_path,execution_plan=build_initial_execution_plan())
@@ -321,7 +347,7 @@ class AgenticFailedEventProcessor:
                 raise RuntimeError("run-scoped HookManager must contain exactly one BudgetHook")
             budget_hooks[0].run_state = state
             budget_hooks[0].limits = limits
-        executor=AgenticActionExecutor(self.dependencies,event,self.artifact_store,self.hook_manager)
+        executor=AgenticActionExecutor(self.dependencies,event,self.artifact_store,self.hook_manager,self.context_manager,self.llm_adapter)
         self.context_manager.compact_if_needed(context, state)
         self.context_manager.prepare_for_main_agent(
             context,
@@ -332,7 +358,11 @@ class AgenticFailedEventProcessor:
         from sql_self_healing_agent.agent.gates.semantic_pre_reflection_gate import SemanticPreReflectionGate
         gate_runner = GateRunner(semantic_gate=SemanticPreReflectionGate(self.dependencies.evaluator))
         executor.gate_runner = gate_runner
-        result=AgentRunner(DeterministicMainAgent(),executor,OnlineGateAdapter(gate_runner,executor,self.hook_manager),limits).run(context,state)
+        main_agent = DeterministicMainAgent()
+        if self.llm_adapter is not None:
+            from sql_self_healing_agent.agent.runner.llm_main_agent import LLMMainAgent
+            main_agent = LLMMainAgent(self.llm_adapter, main_agent)
+        result=AgentRunner(main_agent,executor,OnlineGateAdapter(gate_runner,executor,self.hook_manager,self.context_manager),limits,self.context_manager).run(context,state)
         self.context_manager.compact_if_needed(context, state)
         for snapshot in self.context_manager.snapshots:
             self.artifact_store.save_json_ref(

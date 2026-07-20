@@ -8,6 +8,7 @@ from sql_self_healing_agent.core.atomic_io import read_json
 from sql_self_healing_agent.core.models import UpstreamTaskEvent
 from sql_self_healing_agent.llm.llm_client import build_llm_client_from_env
 from sql_self_healing_agent.memory.memory_store import MemoryStore
+from sql_self_healing_agent.memory.memory_consolidator import MemoryConsolidator
 from sql_self_healing_agent.mock_external_system.mock_upstream_event_executor import MockUpstreamEventExecutor
 from sql_self_healing_agent.mock_external_system.mock_upstream_event_runner import MockUpstreamEventRunner
 from sql_self_healing_agent.mock_external_system.mock_upstream_models import MockScenario
@@ -61,6 +62,11 @@ def run_memory_list(error_type: str | None, keyword: str | None) -> None:
         print("(empty)")
 
 
+def run_memory_consolidate(apply: bool) -> None:
+    report = MemoryConsolidator(MemoryStore()).consolidate(dry_run=not apply)
+    print(json.dumps(report.model_dump(mode="json"), ensure_ascii=False, indent=2))
+
+
 def _not_implemented(command: str) -> None:
     raise SystemExit(f"{command} is not implemented in M1.")
 
@@ -87,6 +93,8 @@ def build_parser() -> argparse.ArgumentParser:
     memory_list_parser = memory_subparsers.add_parser("list")
     memory_list_parser.add_argument("--error-type", required=False)
     memory_list_parser.add_argument("--keyword", required=False)
+    consolidate_parser = memory_subparsers.add_parser("consolidate")
+    consolidate_parser.add_argument("--apply", action="store_true", help="apply merges; default is dry-run")
     return parser
 
 
@@ -101,6 +109,8 @@ def main() -> None:
             _not_implemented("inspect")
         elif args.command == "memory" and args.memory_command == "list":
             run_memory_list(args.error_type, args.keyword)
+        elif args.command == "memory" and args.memory_command == "consolidate":
+            run_memory_consolidate(args.apply)
     except (OSError, ValueError, ValidationError) as error:
         raise SystemExit(str(error)) from error
 

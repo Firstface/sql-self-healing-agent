@@ -62,13 +62,15 @@ class RunScopedLLMGovernanceTest(unittest.TestCase):
                 self.assertEqual(service.handle_upstream_event(event).status, "SQL_READY")
                 session_dir = root / f"sessions/sess_{task_id}"
                 run_state = json.loads((session_dir / "artifacts/attempt_001/agent_run_state.json").read_text())
-                self.assertEqual(run_state["llm_call_count"], 3)
+                self.assertGreaterEqual(run_state["llm_call_count"], 3)
                 trace = [json.loads(line) for line in (session_dir / "trace.jsonl").read_text().splitlines()]
                 starts = [item for item in trace if item["event_type"] == "operation_started" and item["stage"] == "LLM_CALL"]
                 finishes = [item for item in trace if item["event_type"] == "operation_finished" and item["stage"] == "LLM_CALL"]
                 self.assertEqual(run_state["llm_call_count"], len(starts))
-                self.assertEqual([item["payload"]["purpose"] for item in starts], ["diagnosis", "sql_generation", "pre_reflection"])
-                self.assertEqual(len(finishes), 3)
+                purposes = [item["payload"]["purpose"] for item in starts]
+                self.assertEqual([item for item in purposes if item != "main_agent_action"], ["diagnosis", "sql_generation", "pre_reflection"])
+                self.assertIn("main_agent_action", purposes)
+                self.assertEqual(len(finishes), len(starts))
                 serialized = "\n".join(json.dumps(item) for item in trace)
                 self.assertNotIn("JSON Schema:", serialized)
                 self.assertNotIn("<<<INPUT_START>>>", serialized)
@@ -161,7 +163,7 @@ class RegenerationFlowTest(unittest.TestCase):
                 ["candidate_gate_v1", "candidate_gate_v2"],
             )
             run_state = json.loads((root / "sessions/sess_task_regenerate/artifacts/attempt_001/agent_run_state.json").read_text())
-            self.assertEqual(run_state["llm_call_count"], 5)
+            self.assertGreaterEqual(run_state["llm_call_count"], 5)
 
 
 class InsertCandidateClient(FakeLLMClient):

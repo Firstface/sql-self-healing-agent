@@ -86,7 +86,7 @@ class ContextManager:
             error_message=context.error_message,
             execution_plan_summary=context.execution_plan.summary or context.execution_plan.current_step_id or "",
             current_phase=context.phase,
-            workspace_summaries={key: value.summary or value.status for key, value in context.workspace.items()},
+            workspace_summaries={key: value.summary if value.summary is not None else value.status for key, value in context.workspace.items()},
             recent_observations=[item.summary for item in context.recent_observations],
             candidate_summary=f"status={context.candidate.status}; candidate_present={candidate is not None}",
             gate_feedback_summary=feedback,
