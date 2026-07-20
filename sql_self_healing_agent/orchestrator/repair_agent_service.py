@@ -78,6 +78,7 @@ class RepairAgentService:
     def handle_upstream_event(self, event: UpstreamTaskEvent) -> AgentExternalResult:
         if event.status == "FAILED":
             if not self.agent_config.agentic_enabled:
+                self.trace_writer.emit(f"audit_{event.id}", "agentic_rollback_returned", "orchestrator", {"event_id_hash": build_event_key(event)})
                 return self.external_results.human_required("Agent 编排已通过确定性回滚开关关闭。")
             return self._handle_failed_event(event)
         if event.status == "SUCCESS":

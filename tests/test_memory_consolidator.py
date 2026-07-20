@@ -25,6 +25,8 @@ class MemoryConsolidatorTest(unittest.TestCase):
             self.assertIn("s0:a", body)
             self.assertIn("s1:a", body)
             self.assertEqual(sum(len(ids) for ids in store.load_index().values()), 1)
+            rerun = MemoryConsolidator(store).consolidate(dry_run=False)
+            self.assertEqual(rerun.merged_count, 0)
 
     def test_different_repair_shapes_are_not_merged(self):
         with tempfile.TemporaryDirectory() as tmp:

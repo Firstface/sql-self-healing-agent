@@ -57,10 +57,10 @@ class MemoryConsolidator:
                 logical_keys.extend(re.findall(r"logical-key:\s*([^\s]+)", self.store.read_body(member)))
             provenance = "\n".join(f"<!-- logical-key: {key} -->" for key in sorted(set(logical_keys)))
             note = f"\n\n## Consolidation\n\n- merged-at: {datetime.now(timezone.utc).isoformat()}\n- source-count: {len(members)}\n{provenance}\n"
-            self.store.save_markdown(canonical, canonical_text + note)
             for member in members[1:]:
                 self.store.experience_path(member).unlink(missing_ok=True)
                 merged += 1
+            self.store.experience_path(canonical).write_text(canonical_text + note, encoding="utf-8")
         if not dry_run:
             self.store.rebuild_index()
         return ConsolidationReport(scanned_count=len(ids), duplicate_group_count=len(groups), merged_count=merged, groups=report_groups, dry_run=dry_run)
