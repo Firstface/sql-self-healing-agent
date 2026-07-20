@@ -1,0 +1,14 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "a1f9a01b1d12eeac85f96c93e477882786cd172c",
+  "prompts": {},
+  "humans": {
+    "h_eaa3f7515dcca4": {
+      "author": "liweiyi.1391157 <liweiyi.1391157@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
