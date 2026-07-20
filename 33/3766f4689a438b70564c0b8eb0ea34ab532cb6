@@ -1,0 +1,31 @@
+.gitignore
+  h_eaa3f7515dcca4 71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "333766f4689a438b70564c0b8eb0ea34ab532cb6",
+  "prompts": {},
+  "humans": {
+    "h_eaa3f7515dcca4": {
+      "author": "liweiyi.1391157 <liweiyi.1391157@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {
+    "s_b473dd576536d4": {
+      "tool": "trae",
+      "conversation_id": "6a59ede16e7126546836340d",
+      "session_id": "6a59ede16e7126546836340d",
+      "status": "remote_only",
+      "message": "Remote transcript resolution is not implemented yet for TRAE prompts."
+    },
+    "s_b473dd576536d4::t_edc708d6dcfb6e": {
+      "tool": "trae",
+      "conversation_id": "6a59ede16e7126546836340d",
+      "session_id": "6a59ede16e7126546836340d",
+      "status": "remote_only",
+      "message": "Remote transcript resolution is not implemented yet for TRAE prompts."
+    }
+  }
+}
