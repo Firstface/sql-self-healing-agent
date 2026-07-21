@@ -164,9 +164,20 @@ class AgenticActionExecutor:
             def subagent_worker(request, view):
                 if self.llm_adapter is None:
                     return SubAgentResult(status="SUCCEEDED", summary="SubAgent 已检查受控证据；结果仅作为诊断建议。", structured_output={"task_name": request.task_name})
-                from sql_self_healing_agent.agent.runner.subagent_runner import SubAgentAction
+                from sql_self_healing_agent.agent.runner.subagent_runner import SubAgentAction, SubAgentWorkerInput
+                worker_input = SubAgentWorkerInput(
+                    task_name=request.task_name,
+                    objective=request.objective,
+                    expected_output_schema=request.expected_output_schema,
+                    allowed_tools=request.allowed_tools,
+                    controlled_view=view,
+                )
                 return self.llm_adapter.generate_structured(
-                    "你是受限 SubAgent。只能使用允许的工具和受控视图，禁止递归、提交 SQL、修改父状态。输入：" + json.dumps(view, ensure_ascii=False, default=str),
+                    structured_prompt(
+                        "你是受限 SubAgent。基于只读 controlled_view 完成 objective。禁止递归、提交 SQL、修改父状态。若证据足够，必须返回 type=RETURN_RESULT，并在 result 中填写 status=SUCCEEDED、简洁 summary 和 structured_output；仅当确实需要允许的工具或更多上下文时选择其他 action。",
+                        worker_input,
+                        SubAgentAction,
+                    ),
                     SubAgentAction,
                     purpose=f"subagent_{request.task_name}",
                     input_summary="controlled SubAgentInput",

@@ -12,6 +12,15 @@ from sql_self_healing_agent.agent.runner.subagent_task_spec import SubAgentTaskS
 from sql_self_healing_agent.agent.tools.tool_registry import ToolRegistry
 
 
+class SubAgentWorkerInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task_name: str
+    objective: str
+    expected_output_schema: str
+    allowed_tools: list[str] = Field(default_factory=list)
+    controlled_view: dict[str, object]
+
+
 class SubAgentAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["READ_ARTIFACT", "CALL_ALLOWED_TOOL", "RETURN_RESULT", "NEED_MORE_CONTEXT", "RETURN_FAILED"]
