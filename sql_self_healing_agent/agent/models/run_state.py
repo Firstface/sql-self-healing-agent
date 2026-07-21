@@ -23,7 +23,7 @@ class AgentRunLimits(BaseModel):
     max_steps: int = 12
     max_tool_calls: int = 10
     max_sub_agent_calls: int = 4
-    max_wall_time_ms: int = 90000
+    max_wall_time_ms: int = 240000
     max_plan_revisions: int = 6
     max_gate_repair_rounds: int = 1
     max_no_progress_steps: int = 2
