@@ -48,6 +48,8 @@ class ExecutionPlanValidator:
             raise InvalidExecutionPlan("production SQL execution is forbidden")
         if any(step.action_type == "TOOL_CALL" and not step.tool_name for step in plan.steps):
             raise InvalidExecutionPlan("TOOL_CALL plan step requires tool_name")
+        if any(step.action_type == "RUN_SUB_AGENT" and step.sub_agent_request is None for step in plan.steps):
+            raise InvalidExecutionPlan("RUN_SUB_AGENT plan step requires sub_agent_request")
         if plan.current_step_id and plan.current_step_id not in by_id:
             raise InvalidExecutionPlan("current step does not exist")
 

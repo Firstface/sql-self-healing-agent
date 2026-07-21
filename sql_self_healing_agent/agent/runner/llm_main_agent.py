@@ -44,6 +44,7 @@ class LLMMainAgent:
         system = (
             "为当前 SQL 修复任务生成完整可执行 ExecutionPlan。每个步骤必须声明 action_type；"
             "TOOL_CALL 必须使用 available_tools 中的工具并填写 tool_name/tool_input；依赖必须无环；"
+            "需要受限补充诊断时可使用 RUN_SUB_AGENT，并完整填写 sub_agent_request；禁止递归 SubAgent；"
             "不得执行生产 SQL。Gate 不属于计划，候选提交后由 Runner 强制执行。"
         )
         if feedback:
@@ -90,6 +91,8 @@ class LLMMainAgent:
             return None
         if step.action_type == "TOOL_CALL":
             return AgentAction(type="TOOL_CALL", tool_name=step.tool_name, tool_input=step.tool_input)
+        if step.action_type == "RUN_SUB_AGENT" and step.sub_agent_request is not None:
+            return AgentAction(type="RUN_SUB_AGENT", sub_agent_request=step.sub_agent_request)
         return None
 
     def next_action(self, context: MainAgentInput, run_state: AgentRunState) -> AgentAction:

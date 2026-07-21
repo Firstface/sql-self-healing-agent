@@ -4,6 +4,8 @@ from sql_self_healing_agent.agent.context.context_models import MainAgentInput
 from sql_self_healing_agent.agent.models.execution_plan import ExecutionStep, build_initial_execution_plan
 from sql_self_healing_agent.agent.models.run_state import AgentRunState
 from sql_self_healing_agent.agent.runner.llm_main_agent import LLMMainAgent
+from sql_self_healing_agent.agent.models.subagent_models import SubAgentRequest
+from sql_self_healing_agent.agent.runner.llm_main_agent import PlanDecision
 
 
 class Adapter:
@@ -33,6 +35,20 @@ def main_input():
 
 
 class LLMMainAgentTest(unittest.TestCase):
+    def test_plan_driven_subagent_step_is_executed(self):
+        value = main_input()
+        value.execution_plan.steps = [ExecutionStep(
+            step_id="sub", title="inspect", action_type="RUN_SUB_AGENT",
+            sub_agent_request=SubAgentRequest(task_name="diagnose_sql_error", objective="inspect", expected_output_schema="DiagnosisResult"),
+        )]
+        value.execution_plan.current_step_id = "sub"
+        value.recent_observations = [{"status": "SUCCEEDED"}]
+        agent = LLMMainAgent(Adapter([PlanDecision(decision="CONTINUE_PLAN")]), Fallback())
+        agent._initialized = True
+        action = agent.next_action(value, AgentRunState(started_at="now"))
+        self.assertEqual(action.type, "RUN_SUB_AGENT")
+        self.assertEqual(action.sub_agent_request.task_name, "diagnose_sql_error")
+
     def test_invalid_plan_is_repaired_once_then_falls_back(self):
         invalid = build_initial_execution_plan()
         invalid.steps.append(ExecutionStep(step_id="execute_sql", title="执行生产 SQL", action_type="TOOL_CALL", tool_name="ExecuteSQLTool"))

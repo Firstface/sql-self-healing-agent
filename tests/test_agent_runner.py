@@ -2,7 +2,7 @@ import unittest
 
 from sql_self_healing_agent.agent.models.action import AgentAction
 from sql_self_healing_agent.agent.models.context import AgentContext, WorkspaceValue
-from sql_self_healing_agent.agent.models.execution_plan import build_initial_execution_plan
+from sql_self_healing_agent.agent.models.execution_plan import ExecutionPlan, ExecutionStep, build_initial_execution_plan
 from sql_self_healing_agent.agent.models.observation import Observation
 from sql_self_healing_agent.agent.models.run_state import AgentRunLimits, AgentRunState
 from sql_self_healing_agent.agent.runner.agent_result import AgentRunResult
@@ -37,6 +37,22 @@ def context():
 
 
 class AgentRunnerTest(unittest.TestCase):
+    def test_first_autonomous_plan_replaces_scaffold(self) -> None:
+        proposed = ExecutionPlan(
+            revision=1,
+            steps=[ExecutionStep(step_id="ark_step_1", title="read", action_type="TOOL_CALL", tool_name="build_log_digest")],
+            current_step_id="ark_step_1",
+        )
+        state = AgentRunState(started_at="now")
+        ctx = context()
+        result = AgentRunner(
+            SequenceAgent([AgentAction(type="UPDATE_PLAN", execution_plan=proposed), AgentAction(type="RETURN_HUMAN_REQUIRED", reason="done")]),
+            Executor(), Gate(),
+        ).run(ctx, state)
+        self.assertEqual(result.status, "HUMAN_REQUIRED")
+        self.assertEqual(ctx.execution_plan.current_step_id, "ark_step_1")
+        self.assertEqual(state.plan_revision_count, 1)
+
     def test_candidate_immediately_enters_gate(self) -> None:
         gate = Gate()
         runner = AgentRunner(SequenceAgent([AgentAction(type="PROPOSE_SQL_CANDIDATE", candidate_sql="SELECT 2")]), Executor(), gate)

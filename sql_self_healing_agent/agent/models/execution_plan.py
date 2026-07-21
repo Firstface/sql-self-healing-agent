@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from sql_self_healing_agent.agent.models.subagent_models import SubAgentRequest
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -13,6 +15,7 @@ class ExecutionStep(StrictModel):
     action_type: Literal["TOOL_CALL", "RUN_SUB_AGENT", "PROPOSE_SQL_CANDIDATE"]
     tool_name: str | None = None
     tool_input: dict[str, object] = Field(default_factory=dict)
+    sub_agent_request: SubAgentRequest | None = None
     status: Literal["PENDING", "IN_PROGRESS", "COMPLETED", "BLOCKED", "SKIPPED"] = "PENDING"
     depends_on: list[str] = Field(default_factory=list)
     execution_count: int = 0

@@ -2,9 +2,17 @@ import unittest
 
 from sql_self_healing_agent.agent.models.execution_plan import ExecutionPlan, ExecutionStep, build_initial_execution_plan
 from sql_self_healing_agent.agent.planning.execution_plan_validator import ExecutionPlanValidator, InvalidExecutionPlan
+from sql_self_healing_agent.agent.models.subagent_models import SubAgentRequest
 
 
 class ExecutionPlanValidationTest(unittest.TestCase):
+    def test_subagent_step_requires_governed_request(self) -> None:
+        invalid = ExecutionPlan(steps=[ExecutionStep(step_id="sub", title="inspect", action_type="RUN_SUB_AGENT")], current_step_id="sub")
+        with self.assertRaises(InvalidExecutionPlan):
+            ExecutionPlanValidator().validate_initial(invalid)
+        invalid.steps[0].sub_agent_request = SubAgentRequest(task_name="diagnose_sql_error", objective="inspect", expected_output_schema="DiagnosisResult")
+        ExecutionPlanValidator().validate_initial(invalid)
+
     def test_initial_plan_may_use_autonomous_step_ids(self) -> None:
         initial = ExecutionPlan(
             revision=1,

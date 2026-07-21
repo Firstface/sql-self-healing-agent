@@ -12,7 +12,10 @@ class ExecutionPlanUpdater:
         if state.plan_revision_count >= limits.max_plan_revisions:
             raise ValueError("max_plan_revisions exceeded")
         updated = proposed.model_copy(update={"revision": current.revision + 1}, deep=True)
-        self.validator.validate_transition(current, updated)
+        if state.plan_revision_count == 0:
+            self.validator.validate_initial(updated)
+        else:
+            self.validator.validate_transition(current, updated)
         state.plan_revision_count += 1
         return updated
 

@@ -32,6 +32,7 @@ from sql_self_healing_agent.metadata.sql_table_extractor import SQLTableExtracto
 from sql_self_healing_agent.repair.repair_models import RepairPlannerInput, SQLGeneratorInput
 from sql_self_healing_agent.repair.repair_planner import RepairPlanner
 from sql_self_healing_agent.repair.sql_generator import SQLGenerator
+from sql_self_healing_agent.llm.prompt_templates import structured_prompt
 
 
 class DeterministicMainAgent:
@@ -96,6 +97,11 @@ class InternalToolOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     summary: str
     artifact_refs: list[str]
+
+
+class ContextSummaryInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    context: dict[str, object]
 
 
 class InternalBusinessTool:
@@ -325,8 +331,13 @@ class AgenticFailedEventProcessor:
                 raise RuntimeError("summary LLM unavailable")
             return self.hook_manager.execute_compaction(
                 lambda feedback: self.llm_adapter.client.generate_structured(
-                    "只总结现有事实，不得修改任何安全关键字段：" + json.dumps(payload, ensure_ascii=False, default=str),
+                    structured_prompt(
+                        "只总结现有事实，不得修改 current_plan_step、candidate_status、gate_constraints 或 artifact refs；严格返回 ContextSummary。",
+                        ContextSummaryInput(context=payload),
+                        ContextSummary,
+                    ),
                     ContextSummary,
+                    timeout_ms=limits.timeout_ms,
                 ),
                 session_id=str(payload.get("session_id", "")),
                 attempt_id=str(payload.get("attempt_id", "")),
