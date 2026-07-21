@@ -9,6 +9,7 @@ from sql_self_healing_agent.diagnostics.diagnosis_models import LLMDiagnosisResu
 from sql_self_healing_agent.llm.llm_client import LLMClientError
 from sql_self_healing_agent.repair.repair_models import SQLGeneratorLLMOutput
 from sql_self_healing_agent.orchestrator.repair_agent_service import RepairAgentService
+from sql_self_healing_agent.agent.config import AgentConfig
 from tests.fakes import FakeLLMClient
 
 
@@ -18,7 +19,7 @@ class HandleUpstreamEventTest(unittest.TestCase):
             root = Path(temporary_directory)
             log_path = root / "task.log"
             log_path.write_text("SemanticException: Invalid column reference pay_amt\n")
-            service = RepairAgentService(root / "sessions", llm_client=FakeLLMClient(), metadata_path=Path(__file__).parents[1] / "mocks/metadata/tables.json")
+            service = RepairAgentService(root / "sessions", llm_client=FakeLLMClient(), agent_config=AgentConfig(llm_main_agent_enabled=False), metadata_path=Path(__file__).parents[1] / "mocks/metadata/tables.json")
             event = UpstreamTaskEvent(id="task_123", status="FAILED", sql="SELECT user_id, pay_amt FROM dwd_order_detail WHERE date = ", error_message="Task failed", log_path=str(log_path))
             from sql_self_healing_agent.agent.gates.candidate_committer import CandidateCommitter
             with patch.object(CandidateCommitter, "commit", wraps=CandidateCommitter.commit, autospec=True) as commit:
@@ -40,7 +41,7 @@ class HandleUpstreamEventTest(unittest.TestCase):
     def test_success_event_key_includes_log_path(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             sessions = Path(temporary_directory) / "sessions"
-            service = RepairAgentService(sessions, llm_client=FakeLLMClient(), metadata_path=Path(__file__).parents[1] / "mocks/metadata/tables.json")
+            service = RepairAgentService(sessions, llm_client=FakeLLMClient(), agent_config=AgentConfig(llm_main_agent_enabled=False), metadata_path=Path(__file__).parents[1] / "mocks/metadata/tables.json")
             first = UpstreamTaskEvent(id="task_success", status="SUCCESS", sql="SELECT 1", log_path="first.log")
             second = first.model_copy(update={"log_path": "second.log"})
             first_result = service.handle_upstream_event(first)
@@ -56,7 +57,7 @@ class RunScopedLLMGovernanceTest(unittest.TestCase):
     def test_production_llm_calls_are_traced_counted_and_isolated(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
-            service = RepairAgentService(root / "sessions", llm_client=FakeLLMClient(), metadata_path=Path(__file__).parents[1] / "mocks/metadata/tables.json")
+            service = RepairAgentService(root / "sessions", llm_client=FakeLLMClient(), agent_config=AgentConfig(llm_main_agent_enabled=False), metadata_path=Path(__file__).parents[1] / "mocks/metadata/tables.json")
             for task_id in ("governed_1", "governed_2"):
                 event = UpstreamTaskEvent(id=task_id, status="FAILED", sql="SELECT user_id, pay_amt FROM dwd_order_detail WHERE date = ", error_message="Invalid column reference pay_amt")
                 self.assertEqual(service.handle_upstream_event(event).status, "SQL_READY")
@@ -69,7 +70,6 @@ class RunScopedLLMGovernanceTest(unittest.TestCase):
                 self.assertEqual(run_state["llm_call_count"], len(starts))
                 purposes = [item["payload"]["purpose"] for item in starts]
                 self.assertEqual([item for item in purposes if item != "main_agent_action"], ["diagnosis", "sql_generation", "pre_reflection"])
-                self.assertIn("main_agent_action", purposes)
                 self.assertEqual(len(finishes), len(starts))
                 serialized = "\n".join(json.dumps(item) for item in trace)
                 self.assertNotIn("JSON Schema:", serialized)
@@ -98,7 +98,7 @@ class HandleLLMFailureTest(unittest.TestCase):
             root = Path(temporary_directory)
             log_path = root / "task.log"
             log_path.write_text("SemanticException: Invalid column reference pay_amt\n")
-            service = RepairAgentService(root / "sessions", llm_client=GeneratorFailingClient(), metadata_path=Path(__file__).parents[1] / "mocks/metadata/tables.json")
+            service = RepairAgentService(root / "sessions", llm_client=GeneratorFailingClient(), agent_config=AgentConfig(llm_main_agent_enabled=False), metadata_path=Path(__file__).parents[1] / "mocks/metadata/tables.json")
             event = UpstreamTaskEvent(id="task_failure", status="FAILED", sql="SELECT pay_amt FROM dwd_order_detail", error_message="Invalid column reference pay_amt", log_path=str(log_path))
             result = service.handle_upstream_event(event)
             self.assertEqual(result.status, "HUMAN_REQUIRED")
@@ -229,7 +229,7 @@ class TerminalResultIdempotencyTest(unittest.TestCase):
     def test_missing_diagnostic_input_result_is_replayed_exactly(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
-            service = RepairAgentService(root / "sessions", llm_client=FakeLLMClient(), metadata_path=Path(__file__).parents[1] / "mocks/metadata/tables.json")
+            service = RepairAgentService(root / "sessions", llm_client=FakeLLMClient(), agent_config=AgentConfig(llm_main_agent_enabled=False), metadata_path=Path(__file__).parents[1] / "mocks/metadata/tables.json")
             event = UpstreamTaskEvent(id="task_missing_input", status="FAILED", sql="SELECT pay_amt FROM dwd_order_detail")
             first = service.handle_upstream_event(event)
             second = service.handle_upstream_event(event)

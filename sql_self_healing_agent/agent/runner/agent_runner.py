@@ -62,6 +62,23 @@ class AgentRunner:
             if action.type == "RETURN_HUMAN_REQUIRED":
                 run_state.status = "HUMAN_REQUIRED"
                 return self._result("HUMAN_REQUIRED", context, run_state, action.reason)
+            if action.type == "UPDATE_PLAN":
+                try:
+                    context.execution_plan = self.plan_updater.replace(context.execution_plan, action.execution_plan, run_state, self.limits)
+                except InvalidExecutionPlan as error:
+                    rejection = Observation(
+                        observation_id=f"obs_{uuid.uuid4().hex}", action_type="UPDATE_PLAN", status="BLOCKED",
+                        summary=f"ExecutionPlan rejected: {error}", created_at=utc_now_iso(),
+                    )
+                    context.recent_observations.append(rejection)
+                    run_state.no_progress_steps += 1
+                    continue
+                context.recent_observations.append(Observation(
+                    observation_id=f"obs_{uuid.uuid4().hex}", action_type="UPDATE_PLAN", status="SUCCEEDED",
+                    summary=f"ExecutionPlan revision={context.execution_plan.revision}", created_at=utc_now_iso(),
+                ))
+                run_state.no_progress_steps = 0
+                continue
             try:
                 observation = self.action_executor.execute(action, context, run_state)
             except Exception:
@@ -77,20 +94,6 @@ class AgentRunner:
                 run_state.tool_call_count += 1
             elif action.type == "RUN_SUB_AGENT":
                 run_state.sub_agent_call_count += 1
-            elif action.type == "UPDATE_PLAN":
-                try:
-                    context.execution_plan = self.plan_updater.replace(context.execution_plan, action.execution_plan, run_state, self.limits)
-                except InvalidExecutionPlan as error:
-                    rejection = Observation(
-                        observation_id=f"obs_{uuid.uuid4().hex}",
-                        action_type="UPDATE_PLAN",
-                        status="BLOCKED",
-                        summary=f"ExecutionPlan rejected: {error}",
-                        created_at=utc_now_iso(),
-                    )
-                    context.recent_observations.append(rejection)
-                    run_state.no_progress_steps += 1
-                    continue
             if action.type == "PROPOSE_SQL_CANDIDATE":
                 context.candidate.draft_sql = action.candidate_sql
                 context.candidate.status = "DRAFT"

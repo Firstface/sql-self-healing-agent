@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from sql_self_healing_agent.agent.artifacts.artifact_ref import ArtifactRef
 from sql_self_healing_agent.agent.models.tool_models import ToolSpec
+from sql_self_healing_agent.agent.models.execution_plan import ExecutionPlan
 
 
 class StrictModel(BaseModel):
@@ -31,10 +32,11 @@ class MainAgentInput(StrictModel):
     goal: str
     original_sql: str
     error_message: str | None
+    execution_plan: ExecutionPlan
     execution_plan_summary: str
     current_phase: str
     workspace_summaries: dict[str, str]
-    recent_observations: list[str]
+    recent_observations: list[dict[str, object]]
     candidate_summary: str
     gate_feedback_summary: list[str]
     artifact_refs: list[ArtifactRef]

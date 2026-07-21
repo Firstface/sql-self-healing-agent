@@ -23,10 +23,10 @@ class ExecutionPlanValidator:
             if any(dependency not in by_id for dependency in step.depends_on):
                 raise InvalidExecutionPlan("dependency does not exist")
         self._validate_no_cycle(new_plan)
-        if "gate_candidate" not in by_id:
-            raise InvalidExecutionPlan("gate_candidate cannot be removed")
-        if any("execute_sql" in step.step_id.casefold() or "执行生产 sql" in step.title.casefold() for step in new_plan.steps):
+        if any("execute_sql" in step.step_id.casefold() or "执行生产 sql" in step.title.casefold() or (step.tool_name and "execute" in step.tool_name.casefold() and "sql" in step.tool_name.casefold()) for step in new_plan.steps):
             raise InvalidExecutionPlan("production SQL execution is forbidden")
+        if any(step.action_type == "TOOL_CALL" and not step.tool_name for step in new_plan.steps):
+            raise InvalidExecutionPlan("TOOL_CALL plan step requires tool_name")
         old_by_id = {step.step_id: step for step in old_plan.steps}
         for step_id, old_step in old_by_id.items():
             if step_id not in by_id:

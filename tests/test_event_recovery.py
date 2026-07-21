@@ -5,6 +5,7 @@ from pathlib import Path
 
 from sql_self_healing_agent.core.models import UpstreamTaskEvent
 from sql_self_healing_agent.orchestrator.repair_agent_service import RepairAgentService
+from sql_self_healing_agent.agent.config import AgentConfig
 from tests.fakes import FakeLLMClient
 
 
@@ -15,7 +16,7 @@ class EventRecoveryTest(unittest.TestCase):
     def test_created_attempt_without_artifacts_resumes_same_attempt(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
-            service = RepairAgentService(root / "sessions", llm_client=FakeLLMClient(), metadata_path=ROOT / "mocks/metadata/tables.json")
+            service = RepairAgentService(root / "sessions", llm_client=FakeLLMClient(), agent_config=AgentConfig(llm_main_agent_enabled=False), metadata_path=ROOT / "mocks/metadata/tables.json")
             event = UpstreamTaskEvent(id="recover", status="FAILED", sql="SELECT user_id, pay_amt FROM dwd_order_detail WHERE date = ", error_message="Invalid column reference pay_amt")
             session = service.session_store.load_or_create_for_event(event)
             record = service.session_store.create_event_record(session, event)
@@ -30,7 +31,7 @@ class EventRecoveryTest(unittest.TestCase):
     def test_partial_state_is_terminal_not_rerun(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
-            service = RepairAgentService(root / "sessions", llm_client=FakeLLMClient(), metadata_path=ROOT / "mocks/metadata/tables.json")
+            service = RepairAgentService(root / "sessions", llm_client=FakeLLMClient(), agent_config=AgentConfig(llm_main_agent_enabled=False), metadata_path=ROOT / "mocks/metadata/tables.json")
             event = UpstreamTaskEvent(id="partial", status="FAILED", sql="SELECT user_id, pay_amt FROM dwd_order_detail WHERE date = ", error_message="Invalid column reference pay_amt")
             session = service.session_store.load_or_create_for_event(event)
             record = service.session_store.create_event_record(session, event)

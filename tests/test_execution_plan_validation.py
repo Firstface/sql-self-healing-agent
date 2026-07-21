@@ -17,15 +17,13 @@ class ExecutionPlanValidationTest(unittest.TestCase):
         with self.assertRaises(InvalidExecutionPlan):
             ExecutionPlanValidator().validate_transition(new, cyclic)
 
-    def test_gate_cannot_be_removed_and_execute_sql_forbidden(self) -> None:
+    def test_gate_is_system_control_and_execute_sql_is_forbidden(self) -> None:
         old = build_initial_execution_plan()
-        no_gate = old.model_copy(deep=True)
-        no_gate.revision = 1
-        no_gate.steps = [step for step in no_gate.steps if step.step_id != "gate_candidate"]
-        with self.assertRaises(InvalidExecutionPlan):
-            ExecutionPlanValidator().validate_transition(old, no_gate)
+        replacement = old.model_copy(deep=True)
+        replacement.revision = 1
+        ExecutionPlanValidator().validate_transition(old, replacement)
         execute = old.model_copy(deep=True)
         execute.revision = 1
-        execute.steps.append(ExecutionStep(step_id="execute_sql", title="执行生产 SQL"))
+        execute.steps.append(ExecutionStep(step_id="execute_sql", title="执行生产 SQL", action_type="TOOL_CALL", tool_name="ExecuteSQLTool"))
         with self.assertRaises(InvalidExecutionPlan):
             ExecutionPlanValidator().validate_transition(old, execute)

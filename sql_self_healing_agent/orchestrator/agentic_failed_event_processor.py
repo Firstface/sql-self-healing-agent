@@ -266,7 +266,7 @@ class AgenticActionExecutor:
     @staticmethod
     def _observation(action,status,summary,keys):
         step_map = {"build_log_digest":"read_log", "diagnose":"diagnose", "query_metadata":"query_metadata", "retrieve_memory":"retrieve_memory", "build_repair_plan":"generate_candidate", "generate_candidate":"generate_candidate"}
-        return Observation(observation_id=f"obs_{uuid4().hex}",action_type=action.type,status=status,summary=summary,produced_workspace_keys=keys,plan_step_id=step_map.get(action.tool_name) if action.type == "TOOL_CALL" else "gate_candidate" if action.type == "PROPOSE_SQL_CANDIDATE" else None,created_at=utc_now_iso())
+        return Observation(observation_id=f"obs_{uuid4().hex}",action_type=action.type,status=status,summary=summary,produced_workspace_keys=keys,plan_step_id=step_map.get(action.tool_name) if action.type == "TOOL_CALL" else None,created_at=utc_now_iso())
 
 
 class OnlineGateAdapter:

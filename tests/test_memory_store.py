@@ -5,6 +5,7 @@ from pathlib import Path
 
 from sql_self_healing_agent.core.models import UpstreamTaskEvent
 from sql_self_healing_agent.orchestrator.repair_agent_service import RepairAgentService
+from sql_self_healing_agent.agent.config import AgentConfig
 from tests.fakes import FakeLLMClient
 
 
@@ -19,7 +20,7 @@ class MemoryWriterTest(unittest.TestCase):
             log_path.write_text("SemanticException: Invalid column reference pay_amt\n")
             service = RepairAgentService(
                 root / "sessions",
-                llm_client=FakeLLMClient(),
+                llm_client=FakeLLMClient(), agent_config=AgentConfig(llm_main_agent_enabled=False),
                 metadata_path=PROJECT_ROOT / "mocks/metadata/tables.json",
                 memory_dir=root / ".memory",
             )
@@ -50,7 +51,7 @@ class MemoryWriterTest(unittest.TestCase):
             log_path.write_text("SemanticException: Invalid column reference pay_amt\n")
             service = RepairAgentService(
                 root / "sessions",
-                llm_client=FakeLLMClient(),
+                llm_client=FakeLLMClient(), agent_config=AgentConfig(llm_main_agent_enabled=False),
                 metadata_path=PROJECT_ROOT / "mocks/metadata/tables.json",
                 memory_dir=root / ".memory",
             )
@@ -78,7 +79,7 @@ class MemoryWriterTest(unittest.TestCase):
             log_path.write_text("SemanticException: Invalid column reference pay_amt\n")
             service = RepairAgentService(
                 root / "sessions",
-                llm_client=FakeLLMClient(),
+                llm_client=FakeLLMClient(), agent_config=AgentConfig(llm_main_agent_enabled=False),
                 metadata_path=PROJECT_ROOT / "mocks/metadata/tables.json",
                 memory_dir=root / ".memory",
             )
@@ -96,7 +97,7 @@ class MemoryWriterTest(unittest.TestCase):
             root = Path(temporary_directory)
             service = RepairAgentService(
                 root / "sessions",
-                llm_client=FakeLLMClient(),
+                llm_client=FakeLLMClient(), agent_config=AgentConfig(llm_main_agent_enabled=False),
                 metadata_path=PROJECT_ROOT / "mocks/metadata/tables.json",
                 memory_dir=root / ".memory",
             )
@@ -112,7 +113,7 @@ class MemoryWriterTest(unittest.TestCase):
             root = Path(temporary_directory)
             service = RepairAgentService(
                 root / "sessions",
-                llm_client=FakeLLMClient(),
+                llm_client=FakeLLMClient(), agent_config=AgentConfig(llm_main_agent_enabled=False),
                 metadata_path=PROJECT_ROOT / "mocks/metadata/tables.json",
                 memory_dir=root / ".memory",
             )

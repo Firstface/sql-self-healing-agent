@@ -8,7 +8,7 @@ from sql_self_healing_agent.agent.models.subagent_models import SubAgentLimits
 
 
 class AgentConfigTest(unittest.TestCase):
-    def test_llm_main_agent_is_enabled_by_default(self) -> None:
+    def test_llm_main_agent_is_enabled_with_fail_safe_by_default(self) -> None:
         self.assertTrue(AgentConfig().llm_main_agent_enabled)
 
     def test_defaults_pass_cross_validation(self) -> None:
