@@ -69,6 +69,21 @@ class AgentRunnerTest(unittest.TestCase):
         self.assertEqual(state.plan_revision_count, 0)
         self.assertTrue(any(item.status == "BLOCKED" and "production SQL" in item.summary for item in ctx.recent_observations))
 
+    def test_observation_binds_to_autonomous_current_step(self) -> None:
+        ctx = context()
+        ctx.execution_plan.steps[0].step_id = "ark_step_1"
+        for step in ctx.execution_plan.steps:
+            step.depends_on = ["ark_step_1" if dep == "read_log" else dep for dep in step.depends_on]
+        ctx.execution_plan.current_step_id = "ark_step_1"
+        result = AgentRunner(
+            SequenceAgent([AgentAction(type="TOOL_CALL", tool_name="x", tool_input={}), AgentAction(type="RETURN_HUMAN_REQUIRED", reason="done")]),
+            Executor(), Gate(), AgentRunLimits(max_no_progress_steps=2),
+        ).run(ctx, AgentRunState(started_at="now"))
+        self.assertEqual(result.status, "HUMAN_REQUIRED")
+        self.assertEqual(ctx.recent_observations[0].plan_step_id, "ark_step_1")
+        self.assertEqual(ctx.execution_plan.steps[0].execution_count, 1)
+        self.assertEqual(ctx.execution_plan.steps[0].status, "COMPLETED")
+
     def test_step_budget_stops_without_candidate(self) -> None:
         runner = AgentRunner(SequenceAgent([]), Executor(), Gate(), AgentRunLimits(max_steps=0))
         result = runner.run(context(), AgentRunState(started_at="now"))

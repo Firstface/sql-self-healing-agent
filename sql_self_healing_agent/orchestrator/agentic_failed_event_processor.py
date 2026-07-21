@@ -265,8 +265,7 @@ class AgenticActionExecutor:
 
     @staticmethod
     def _observation(action,status,summary,keys):
-        step_map = {"build_log_digest":"read_log", "diagnose":"diagnose", "query_metadata":"query_metadata", "retrieve_memory":"retrieve_memory", "build_repair_plan":"generate_candidate", "generate_candidate":"generate_candidate"}
-        return Observation(observation_id=f"obs_{uuid4().hex}",action_type=action.type,status=status,summary=summary,produced_workspace_keys=keys,plan_step_id=step_map.get(action.tool_name) if action.type == "TOOL_CALL" else None,created_at=utc_now_iso())
+        return Observation(observation_id=f"obs_{uuid4().hex}",action_type=action.type,status=status,summary=summary,produced_workspace_keys=keys,created_at=utc_now_iso())
 
 
 class OnlineGateAdapter:
@@ -361,7 +360,7 @@ class AgenticFailedEventProcessor:
         main_agent = DeterministicMainAgent()
         if self.llm_adapter is not None:
             from sql_self_healing_agent.agent.runner.llm_main_agent import LLMMainAgent
-            main_agent = LLMMainAgent(self.llm_adapter, main_agent)
+            main_agent = LLMMainAgent(self.llm_adapter, main_agent, self.config.planning_timeout_ms)
         result=AgentRunner(main_agent,executor,OnlineGateAdapter(gate_runner,executor,self.hook_manager,self.context_manager),limits,self.context_manager).run(context,state)
         self.context_manager.compact_if_needed(context, state)
         for snapshot in self.context_manager.snapshots:

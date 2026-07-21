@@ -15,6 +15,7 @@ class AgentConfig(BaseModel):
     memory_unknown_scan_budget: int = Field(default=500, ge=1)
     llm_schema_retries: int = Field(default=1, ge=0, le=1)
     llm_transient_retries: int = Field(default=2, ge=0, le=2)
+    planning_timeout_ms: int = Field(default=120000, ge=10000, le=180000)
     agentic_enabled: bool = True
     llm_main_agent_enabled: bool = True
 

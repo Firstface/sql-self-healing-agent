@@ -10,6 +10,18 @@ from sql_self_healing_agent.agent.planning.execution_plan_validator import Execu
 from sql_self_healing_agent.llm.prompt_templates import structured_prompt
 
 
+class PlannerInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    original_sql: str
+    error_message: str | None
+    current_phase: str
+    workspace_summaries: dict[str, str]
+    available_tools: list[dict[str, object]]
+    remaining_budget: dict[str, int]
+    previous_plan_summary: str | None = None
+    latest_observations: list[dict[str, object]] = Field(default_factory=list)
+
+
 class PlanDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
     decision: Literal["CONTINUE_PLAN", "REVISE_PLAN", "PROPOSE_SQL_CANDIDATE", "RETURN_HUMAN_REQUIRED"]
@@ -21,12 +33,13 @@ class PlanDecision(BaseModel):
 class LLMMainAgent:
     """Plan-execute-replan policy. Fallback is used only after one governed repair fails."""
 
-    def __init__(self, adapter: LLMAdapter, fallback) -> None:
+    def __init__(self, adapter: LLMAdapter, fallback, planning_timeout_ms: int = 120000) -> None:
         self.adapter = adapter
         self.fallback = fallback
         self.validator = ExecutionPlanValidator()
         self._initialized = False
         self.last_rejection_reason: str | None = None
+        self.planning_timeout_ms = planning_timeout_ms
 
     def _generate_plan(self, context: MainAgentInput, purpose: str, feedback: str | None = None) -> ExecutionPlan:
         system = (
@@ -36,14 +49,28 @@ class LLMMainAgent:
         )
         if feedback:
             system += f"上一次计划校验失败：{feedback}。请修复该问题。"
+        planner_input = PlannerInput(
+            original_sql=context.original_sql,
+            error_message=context.error_message,
+            current_phase=context.current_phase,
+            workspace_summaries=context.workspace_summaries,
+            available_tools=[item.model_dump(mode="json") for item in context.available_tools],
+            remaining_budget=context.remaining_budget,
+            previous_plan_summary=context.execution_plan_summary if self._initialized else None,
+            latest_observations=context.recent_observations[-3:],
+        )
         plan = self.adapter.generate_structured(
-            structured_prompt(system, context, ExecutionPlan),
+            structured_prompt(system, planner_input, ExecutionPlan),
             ExecutionPlan,
             purpose=purpose,
             input_summary="controlled planning context",
+            timeout_ms=self.planning_timeout_ms,
         )
         plan = plan.model_copy(update={"revision": context.execution_plan.revision + 1}, deep=True)
-        self.validator.validate_transition(context.execution_plan, plan)
+        if not self._initialized:
+            self.validator.validate_initial(plan)
+        else:
+            self.validator.validate_transition(context.execution_plan, plan)
         return plan
 
     def _plan_with_one_repair(self, context: MainAgentInput) -> ExecutionPlan | None:

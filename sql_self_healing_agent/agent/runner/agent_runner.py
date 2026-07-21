@@ -85,6 +85,8 @@ class AgentRunner:
                 run_state.status = "FAILED"
                 run_state.stop_reason = "AGENT_RUNTIME_ERROR"
                 return self._result("FAILED", context, run_state, "AGENT_RUNTIME_ERROR")
+            if action.type in {"TOOL_CALL", "RUN_SUB_AGENT"}:
+                observation = observation.model_copy(update={"plan_step_id": context.execution_plan.current_step_id})
             progress = ProgressDetector.made_progress(observation, context.recent_observations)
             context.recent_observations.append(observation)
             context.last_action = action

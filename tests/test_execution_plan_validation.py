@@ -1,10 +1,18 @@
 import unittest
 
-from sql_self_healing_agent.agent.models.execution_plan import ExecutionStep, build_initial_execution_plan
+from sql_self_healing_agent.agent.models.execution_plan import ExecutionPlan, ExecutionStep, build_initial_execution_plan
 from sql_self_healing_agent.agent.planning.execution_plan_validator import ExecutionPlanValidator, InvalidExecutionPlan
 
 
 class ExecutionPlanValidationTest(unittest.TestCase):
+    def test_initial_plan_may_use_autonomous_step_ids(self) -> None:
+        initial = ExecutionPlan(
+            revision=1,
+            steps=[ExecutionStep(step_id="step_1", title="read log", action_type="TOOL_CALL", tool_name="build_log_digest")],
+            current_step_id="step_1",
+        )
+        ExecutionPlanValidator().validate_initial(initial)
+
     def test_valid_transition_and_invalid_cycle(self) -> None:
         old = build_initial_execution_plan()
         new = old.model_copy(deep=True)
