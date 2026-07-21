@@ -53,6 +53,21 @@ class AgentRunnerTest(unittest.TestCase):
         self.assertEqual(result.status, "HUMAN_REQUIRED")
         self.assertEqual(result.stop_reason, "NO_PROGRESS")
 
+    def test_invalid_plan_is_blocked_without_crashing_runner(self) -> None:
+        invalid_plan = build_initial_execution_plan()
+        invalid_plan.steps = [step for step in invalid_plan.steps if step.step_id != "gate_candidate"]
+        invalid_plan.revision = 1
+        actions = [
+            AgentAction(type="UPDATE_PLAN", execution_plan=invalid_plan),
+            AgentAction(type="PROPOSE_SQL_CANDIDATE", candidate_sql="SELECT 2"),
+        ]
+        state = AgentRunState(started_at="now")
+        ctx = context()
+        result = AgentRunner(SequenceAgent(actions), Executor(), Gate()).run(ctx, state)
+        self.assertEqual(result.status, "CANDIDATE_READY")
+        self.assertEqual(state.plan_revision_count, 0)
+        self.assertTrue(any(item.status == "BLOCKED" and "gate_candidate" in item.summary for item in ctx.recent_observations))
+
     def test_step_budget_stops_without_candidate(self) -> None:
         runner = AgentRunner(SequenceAgent([]), Executor(), Gate(), AgentRunLimits(max_steps=0))
         result = runner.run(context(), AgentRunState(started_at="now"))

@@ -10,6 +10,7 @@ from sql_self_healing_agent.agent.models.observation import Observation
 from sql_self_healing_agent.agent.models.run_state import AgentRunLimits, AgentRunState
 from sql_self_healing_agent.agent.planning.progress_detector import ProgressDetector
 from sql_self_healing_agent.agent.planning.execution_plan_updater import ExecutionPlanUpdater
+from sql_self_healing_agent.agent.planning.execution_plan_validator import InvalidExecutionPlan
 from sql_self_healing_agent.agent.runner.agent_result import AgentRunResult
 from sql_self_healing_agent.core.time_utils import utc_now_iso
 
@@ -77,7 +78,19 @@ class AgentRunner:
             elif action.type == "RUN_SUB_AGENT":
                 run_state.sub_agent_call_count += 1
             elif action.type == "UPDATE_PLAN":
-                context.execution_plan = self.plan_updater.replace(context.execution_plan, action.execution_plan, run_state, self.limits)
+                try:
+                    context.execution_plan = self.plan_updater.replace(context.execution_plan, action.execution_plan, run_state, self.limits)
+                except InvalidExecutionPlan as error:
+                    rejection = Observation(
+                        observation_id=f"obs_{uuid.uuid4().hex}",
+                        action_type="UPDATE_PLAN",
+                        status="BLOCKED",
+                        summary=f"ExecutionPlan rejected: {error}",
+                        created_at=utc_now_iso(),
+                    )
+                    context.recent_observations.append(rejection)
+                    run_state.no_progress_steps += 1
+                    continue
             if action.type == "PROPOSE_SQL_CANDIDATE":
                 context.candidate.draft_sql = action.candidate_sql
                 context.candidate.status = "DRAFT"
