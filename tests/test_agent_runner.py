@@ -1,7 +1,7 @@
 import unittest
 
 from sql_self_healing_agent.agent.models.action import AgentAction
-from sql_self_healing_agent.agent.models.context import AgentContext
+from sql_self_healing_agent.agent.models.context import AgentContext, WorkspaceValue
 from sql_self_healing_agent.agent.models.execution_plan import build_initial_execution_plan
 from sql_self_healing_agent.agent.models.observation import Observation
 from sql_self_healing_agent.agent.models.run_state import AgentRunLimits, AgentRunState
@@ -40,9 +40,22 @@ class AgentRunnerTest(unittest.TestCase):
     def test_candidate_immediately_enters_gate(self) -> None:
         gate = Gate()
         runner = AgentRunner(SequenceAgent([AgentAction(type="PROPOSE_SQL_CANDIDATE", candidate_sql="SELECT 2")]), Executor(), gate)
-        result = runner.run(context(), AgentRunState(started_at="now"))
+        ctx = context()
+        ctx.workspace["candidate_sql"] = WorkspaceValue(status="AVAILABLE", summary="SELECT 2", artifact_ref="owned-ref", updated_at="now")
+        ctx.candidate.draft_artifact_ref = "owned-ref"
+        result = runner.run(ctx, AgentRunState(started_at="now"))
         self.assertEqual(result.status, "CANDIDATE_READY")
         self.assertEqual(gate.calls, 1)
+
+    def test_candidate_without_owned_workspace_artifact_never_enters_gate(self) -> None:
+        gate = Gate()
+        result = AgentRunner(
+            SequenceAgent([AgentAction(type="PROPOSE_SQL_CANDIDATE", candidate_sql="SELECT invented")]),
+            Executor(), gate,
+        ).run(context(), AgentRunState(started_at="now"))
+        self.assertEqual(result.status, "HUMAN_REQUIRED")
+        self.assertEqual(result.stop_reason, "NO_CANDIDATE_ARTIFACT")
+        self.assertEqual(gate.calls, 0)
 
     def test_invalid_action_and_no_progress_stop_safely(self) -> None:
         invalid = AgentRunner(SequenceAgent([{"type": "PROPOSE_SQL_CANDIDATE"}]), Executor(), Gate())
@@ -64,6 +77,8 @@ class AgentRunnerTest(unittest.TestCase):
         ]
         state = AgentRunState(started_at="now")
         ctx = context()
+        ctx.workspace["candidate_sql"] = WorkspaceValue(status="AVAILABLE", summary="SELECT 2", artifact_ref="owned-ref", updated_at="now")
+        ctx.candidate.draft_artifact_ref = "owned-ref"
         result = AgentRunner(SequenceAgent(actions), Executor(), Gate()).run(ctx, state)
         self.assertEqual(result.status, "CANDIDATE_READY")
         self.assertEqual(state.plan_revision_count, 0)

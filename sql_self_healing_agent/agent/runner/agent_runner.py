@@ -97,7 +97,19 @@ class AgentRunner:
             elif action.type == "RUN_SUB_AGENT":
                 run_state.sub_agent_call_count += 1
             if action.type == "PROPOSE_SQL_CANDIDATE":
-                context.candidate.draft_sql = action.candidate_sql
+                workspace_candidate = context.workspace.get("candidate_sql")
+                if (
+                    workspace_candidate is None
+                    or workspace_candidate.status != "AVAILABLE"
+                    or not workspace_candidate.summary
+                    or workspace_candidate.summary != action.candidate_sql
+                    or not workspace_candidate.artifact_ref
+                    or context.candidate.draft_artifact_ref != workspace_candidate.artifact_ref
+                ):
+                    run_state.status = "HUMAN_REQUIRED"
+                    run_state.stop_reason = "NO_CANDIDATE_ARTIFACT"
+                    return self._result("HUMAN_REQUIRED", context, run_state, "NO_CANDIDATE_ARTIFACT")
+                context.candidate.draft_sql = workspace_candidate.summary
                 context.candidate.status = "DRAFT"
                 context.phase = "GATING"
                 return self.candidate_gate.run(context, run_state)

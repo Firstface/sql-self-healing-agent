@@ -26,7 +26,6 @@ class PlanDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
     decision: Literal["CONTINUE_PLAN", "REVISE_PLAN", "PROPOSE_SQL_CANDIDATE", "RETURN_HUMAN_REQUIRED"]
     execution_plan: ExecutionPlan | None = None
-    candidate_sql: str | None = None
     reason: str | None = None
 
 
@@ -103,7 +102,7 @@ class LLMMainAgent:
             try:
                 decision = self.adapter.generate_structured(
                     structured_prompt(
-                        "根据当前计划和最新 Observation 判断是否继续、重规划、提交候选或人工介入。候选必须来自 workspace candidate_sql；不要生成新的 SQL。Gate 由 Runner 强制执行。",
+                        "根据当前计划和最新 Observation 判断是否继续、重规划、提交候选或人工介入。仅当 workspace_summaries.candidate_sql 已存在且非 FAILED 时才可选择 PROPOSE_SQL_CANDIDATE；你不得生成或返回 SQL。Gate 由 Runner 强制执行。",
                         context,
                         PlanDecision,
                     ),
@@ -118,9 +117,10 @@ class LLMMainAgent:
                 if plan:
                     return AgentAction(type="UPDATE_PLAN", execution_plan=plan)
             elif decision.decision == "PROPOSE_SQL_CANDIDATE":
-                candidate = context.workspace_summaries.get("candidate_sql") or decision.candidate_sql
-                if candidate and candidate != "FAILED":
+                candidate = context.workspace_summaries.get("candidate_sql")
+                if candidate and candidate not in {"FAILED", "MISSING", "None"}:
                     return AgentAction(type="PROPOSE_SQL_CANDIDATE", candidate_sql=candidate)
+                decision = PlanDecision(decision="CONTINUE_PLAN")
             elif decision.decision == "RETURN_HUMAN_REQUIRED":
                 return AgentAction(type="RETURN_HUMAN_REQUIRED", reason=decision.reason or "LLM 判断需要人工介入")
 
