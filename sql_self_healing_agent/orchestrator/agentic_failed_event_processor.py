@@ -330,13 +330,15 @@ class AgenticFailedEventProcessor:
             if self.llm_adapter is None:
                 raise RuntimeError("summary LLM unavailable")
             return self.hook_manager.execute_compaction(
-                lambda feedback: self.llm_adapter.client.generate_structured(
+                lambda feedback: self.llm_adapter.generate_structured(
                     structured_prompt(
                         "只总结现有事实，不得修改 current_plan_step、candidate_status、gate_constraints 或 artifact refs；严格返回 ContextSummary。",
                         ContextSummaryInput(context=payload),
                         ContextSummary,
                     ),
                     ContextSummary,
+                    purpose="context_summary",
+                    input_summary="controlled context snapshot",
                     timeout_ms=limits.timeout_ms,
                 ),
                 session_id=str(payload.get("session_id", "")),

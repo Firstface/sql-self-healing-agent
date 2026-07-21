@@ -13,6 +13,15 @@ def context():
 
 
 class SubAgentTest(unittest.TestCase):
+    def test_worker_exception_returns_failed_result(self) -> None:
+        def worker(request, view):
+            raise RuntimeError("provider failed")
+        request = SubAgentRequest(task_name="diagnose_sql_error", objective="diagnose", expected_output_schema="x")
+        result = SubAgentRunner(worker).run(request, context())
+        self.assertEqual(result.status, "FAILED")
+        self.assertEqual(result.stop_reason, "SUB_AGENT_LLM_ERROR")
+        self.assertIn("RuntimeError", result.summary)
+
     def test_no_recursion_and_limits(self) -> None:
         with self.assertRaises(ValidationError):
             SubAgentLimits(max_steps=11)

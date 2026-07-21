@@ -50,7 +50,14 @@ class SubAgentRunner:
             if int((time.monotonic() - started) * 1000) >= budget.max_wall_time_ms:
                 return SubAgentResult(status="BUDGET_EXCEEDED", summary="SubAgent 独立时间预算耗尽", stop_reason="MAX_WALL_TIME")
             budget.step_count += 1
-            raw = self.worker(request, {**view, "budget": budget.model_dump(), "observations": observations})
+            try:
+                raw = self.worker(request, {**view, "budget": budget.model_dump(), "observations": observations})
+            except Exception as error:
+                return SubAgentResult(
+                    status="FAILED",
+                    summary=f"SubAgent worker failed: {type(error).__name__}",
+                    stop_reason="SUB_AGENT_LLM_ERROR",
+                )
             if isinstance(raw, SubAgentResult):
                 return SubAgentResult.model_validate(raw)
             try:

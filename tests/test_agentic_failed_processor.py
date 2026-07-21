@@ -1,7 +1,7 @@
 import json
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from pathlib import Path
 
 from sql_self_healing_agent.artifacts.artifact_store import ArtifactStore
@@ -17,6 +17,37 @@ ROOT=Path(__file__).parents[1]
 
 
 class AgenticFailedProcessorTest(unittest.TestCase):
+    def test_context_summary_routes_through_adapter_with_schema_and_timeout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            artifacts = ArtifactStore(root / ".sessions")
+            provider = MockMetadataProvider(ROOT / "mocks/metadata/tables.json")
+            vocab = json.loads((ROOT / "sql_self_healing_agent/logs/keyword_vocab.json").read_text())
+            deps = ProcessorDependencies(vocab, provider, MemoryRetriever(root / ".memory"), RepairPlanner(provider), SQLGenerator())
+            adapter = Mock()
+            hook_manager = Mock()
+            hook_manager.execute_compaction.side_effect = lambda call, **kwargs: call(None)
+            processor = AgenticFailedEventProcessor(deps, artifacts, hook_manager=hook_manager, llm_adapter=adapter)
+            adapter.generate_structured.return_value = __import__(
+                "sql_self_healing_agent.agent.context.context_models", fromlist=["ContextSummary"]
+            ).ContextSummary(
+                current_goal="repair", confirmed_facts=[], unresolved_questions=[],
+                important_artifact_refs=[], current_plan_step="read_log",
+                candidate_status="NONE", gate_constraints=[],
+            )
+            payload = {
+                "session_id": "s", "attempt_id": "a", "original_sql": "SELECT 1",
+                "execution_plan": {"current_step_id": "read_log"}, "candidate": {"status": "NONE"},
+            }
+            result = processor.context_manager.summary_callable(payload, processor.config.compaction_limits)
+            self.assertEqual(result.current_plan_step, "read_log")
+            kwargs = adapter.generate_structured.call_args.kwargs
+            self.assertEqual(kwargs["purpose"], "context_summary")
+            self.assertEqual(kwargs["timeout_ms"], processor.config.compaction_limits.timeout_ms)
+            prompt = adapter.generate_structured.call_args.args[0]
+            self.assertIn("OUTPUT TYPE: ContextSummary", prompt)
+            self.assertIn("OUTPUT JSON SCHEMA START", prompt)
+
     def test_dynamic_actions_reach_gate_and_candidate_ready(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp); sessions=root/".sessions"; memory=root/".memory"
