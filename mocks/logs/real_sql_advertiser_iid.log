@@ -1,0 +1,7 @@
+2026-07-21 10:00:00 INFO Spark task started application_1721000000000_00001
+2026-07-21 10:00:12 INFO Executing WITH table_rows AS (SELECT ...) INSERT INTO ad_compliance.verification_sampling_output PARTITION(date='20260617', tenant='unmatched_data_scanning') SELECT * FROM table_rows
+2026-07-21 10:00:15 ERROR org.apache.spark.sql.AnalysisException: Invalid column reference advertiser_iid
+Caused by: org.apache.spark.sql.AnalysisException: cannot resolve '`advertiser_iid`' given input columns: [ad_dm.ad_stats_hourly.advertiser_id, ad_dm.ad_stats_hourly.app, ad_dm.ad_stats_hourly.date, ad_dm.ad_stats_hourly.hour]; line 1 pos 42
+	at org.apache.spark.sql.catalyst.analysis.package$AnalysisErrorAt.failAnalysis(package.scala:47)
+	at org.apache.spark.sql.catalyst.analysis.CheckAnalysis$$anonfun$$nestedInanonfun$checkAnalysis$1$2.applyOrElse(CheckAnalysis.scala:115)
+2026-07-21 10:00:15 ERROR Task failed with SemanticException Invalid column reference advertiser_iid

@@ -42,6 +42,25 @@ class SQLGeneratorFailureTest(unittest.TestCase):
         self.assertTrue(result.cannot_generate_safely)
         self.assertEqual(result.reason, "LLM 未能返回合法的结构化 SQL 结果。")
 
+    def test_changed_fragments_only_are_applied_locally(self) -> None:
+        from sql_self_healing_agent.repair.repair_models import SQLGeneratorLLMOutput
+
+        class FragmentsOnlyClient:
+            def generate_structured(self, prompt, response_model):
+                return SQLGeneratorLLMOutput.model_validate({
+                    "generated": True,
+                    "sql_candidate": None,
+                    "cannot_generate_safely": False,
+                    "reason": None,
+                    "changed_fragments": [{"before": "pay_amt", "after": "payment_amount", "action_type": "REPLACE_COLUMN", "reason": "execute plan"}],
+                })
+
+        plan = RepairPlan(plan_id="plan", repairable=True, actions=[RepairAction(action_type=RepairActionType.REPLACE_COLUMN, target_fragment="pay_amt", replacement_fragment="payment_amount", reason="test", risk_level="LOW")], confidence=0.9)
+        client = FragmentsOnlyClient()
+        result = SQLGenerator(client, build_test_llm_adapter(client)).generate(SQLGeneratorInput(failed_sql="SELECT pay_amt FROM t", repair_plan=plan))
+        self.assertTrue(result.generated)
+        self.assertEqual(result.sql_candidate, "SELECT payment_amount FROM t")
+
     def test_oscillation_blocks_column_not_found_before_planning(self) -> None:
         provider = MockMetadataProvider(Path(__file__).parents[1] / "mocks/metadata/tables.json")
         extraction = SQLTableExtractor().extract("SELECT pay_amt FROM dwd_order_detail")

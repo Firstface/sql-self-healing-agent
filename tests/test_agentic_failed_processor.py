@@ -48,6 +48,35 @@ class AgenticFailedProcessorTest(unittest.TestCase):
             self.assertIn("OUTPUT TYPE: ContextSummary", prompt)
             self.assertIn("OUTPUT JSON SCHEMA START", prompt)
 
+    def test_context_summary_redacts_large_original_sql_from_prompt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            artifacts = ArtifactStore(root / ".sessions")
+            provider = MockMetadataProvider(ROOT / "mocks/metadata/tables.json")
+            vocab = json.loads((ROOT / "sql_self_healing_agent/logs/keyword_vocab.json").read_text())
+            deps = ProcessorDependencies(vocab, provider, MemoryRetriever(root / ".memory"), RepairPlanner(provider), SQLGenerator())
+            adapter = Mock()
+            hook_manager = Mock()
+            hook_manager.execute_compaction.side_effect = lambda call, **kwargs: call(None)
+            processor = AgenticFailedEventProcessor(deps, artifacts, hook_manager=hook_manager, llm_adapter=adapter)
+            adapter.generate_structured.return_value = __import__(
+                "sql_self_healing_agent.agent.context.context_models", fromlist=["ContextSummary"]
+            ).ContextSummary(
+                current_goal="repair", confirmed_facts=[], unresolved_questions=[],
+                important_artifact_refs=[], current_plan_step="read_log",
+                candidate_status="NONE", gate_constraints=[],
+            )
+            huge_sql = "SELECT col_" + "x" * 43000 + " /*SECRET_MARKER*/ FROM t"
+            payload = {
+                "session_id": "s", "attempt_id": "a", "original_sql": huge_sql,
+                "execution_plan": {"current_step_id": "read_log"}, "candidate": {"status": "NONE"},
+            }
+            processor.context_manager.summary_callable(payload, processor.config.compaction_limits)
+            prompt = adapter.generate_structured.call_args.args[0]
+            self.assertNotIn("SECRET_MARKER", prompt)
+            self.assertLess(len(prompt), len(huge_sql))
+            self.assertIn(f"len={len(huge_sql)}", prompt)
+
     def test_dynamic_actions_reach_gate_and_candidate_ready(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp); sessions=root/".sessions"; memory=root/".memory"

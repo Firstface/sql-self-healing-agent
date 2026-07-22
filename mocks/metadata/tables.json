@@ -3,9 +3,803 @@
     "exists": true,
     "owner": "mock_owner",
     "columns": [
-      {"name": "user_id", "data_type": "bigint"},
-      {"name": "payment_amount", "data_type": "string"},
-      {"name": "date", "data_type": "string", "is_partition": true}
+      {
+        "name": "user_id",
+        "data_type": "bigint"
+      },
+      {
+        "name": "payment_amount",
+        "data_type": "string"
+      },
+      {
+        "name": "date",
+        "data_type": "string",
+        "is_partition": true
+      }
+    ]
+  },
+  "ad_stats_hourly": {
+    "exists": true,
+    "owner": "ad_dm",
+    "columns": [
+      {
+        "name": "ac",
+        "data_type": "string"
+      },
+      {
+        "name": "ad_category",
+        "data_type": "string"
+      },
+      {
+        "name": "ad_category2",
+        "data_type": "string"
+      },
+      {
+        "name": "ad_category3",
+        "data_type": "string"
+      },
+      {
+        "name": "ad_convert_id",
+        "data_type": "string"
+      },
+      {
+        "name": "ad_extra_data",
+        "data_type": "string"
+      },
+      {
+        "name": "ad_id",
+        "data_type": "string"
+      },
+      {
+        "name": "ad_label",
+        "data_type": "string"
+      },
+      {
+        "name": "ad_name",
+        "data_type": "string"
+      },
+      {
+        "name": "ad_ref_app_id",
+        "data_type": "string"
+      },
+      {
+        "name": "ad_ref_pixel_id",
+        "data_type": "string"
+      },
+      {
+        "name": "adv_vid",
+        "data_type": "string"
+      },
+      {
+        "name": "advertiser_id",
+        "data_type": "string"
+      },
+      {
+        "name": "advertiser_timezone",
+        "data_type": "string"
+      },
+      {
+        "name": "advertiser_timezone_stat_time",
+        "data_type": "string"
+      },
+      {
+        "name": "adx_duplicate_flag",
+        "data_type": "string"
+      },
+      {
+        "name": "age",
+        "data_type": "string"
+      },
+      {
+        "name": "aic_ad_industry",
+        "data_type": "string"
+      },
+      {
+        "name": "aic_ad_label",
+        "data_type": "string"
+      },
+      {
+        "name": "api_time",
+        "data_type": "string"
+      },
+      {
+        "name": "app",
+        "data_type": "string"
+      },
+      {
+        "name": "app_id",
+        "data_type": "string"
+      },
+      {
+        "name": "app_language",
+        "data_type": "string"
+      },
+      {
+        "name": "app_name",
+        "data_type": "string"
+      },
+      {
+        "name": "app_version",
+        "data_type": "string"
+      },
+      {
+        "name": "at",
+        "data_type": "string"
+      },
+      {
+        "name": "bid",
+        "data_type": "string"
+      },
+      {
+        "name": "bid_price",
+        "data_type": "string"
+      },
+      {
+        "name": "bill_type",
+        "data_type": "string"
+      },
+      {
+        "name": "biz_line",
+        "data_type": "string"
+      },
+      {
+        "name": "campaign_objective_type",
+        "data_type": "string"
+      },
+      {
+        "name": "chn_id",
+        "data_type": "string"
+      },
+      {
+        "name": "city_id",
+        "data_type": "string"
+      },
+      {
+        "name": "classify",
+        "data_type": "string"
+      },
+      {
+        "name": "click_cnt",
+        "data_type": "string"
+      },
+      {
+        "name": "client_ip",
+        "data_type": "string"
+      },
+      {
+        "name": "client_time",
+        "data_type": "string"
+      },
+      {
+        "name": "cohort_id",
+        "data_type": "string"
+      },
+      {
+        "name": "compaign_id",
+        "data_type": "string"
+      },
+      {
+        "name": "content_type",
+        "data_type": "string"
+      },
+      {
+        "name": "convert_cnt",
+        "data_type": "string"
+      },
+      {
+        "name": "convert_type",
+        "data_type": "string"
+      },
+      {
+        "name": "cost",
+        "data_type": "string"
+      },
+      {
+        "name": "country_id",
+        "data_type": "string"
+      },
+      {
+        "name": "cpa_phrase",
+        "data_type": "string"
+      },
+      {
+        "name": "cprice",
+        "data_type": "string"
+      },
+      {
+        "name": "cpt_sequence",
+        "data_type": "string"
+      },
+      {
+        "name": "creative_id",
+        "data_type": "string"
+      },
+      {
+        "name": "creative_material_mode",
+        "data_type": "string"
+      },
+      {
+        "name": "currency_code",
+        "data_type": "string"
+      },
+      {
+        "name": "data_center",
+        "data_type": "string"
+      },
+      {
+        "name": "data_source_psm",
+        "data_type": "string"
+      },
+      {
+        "name": "deep_convert",
+        "data_type": "string"
+      },
+      {
+        "name": "device_id",
+        "data_type": "string"
+      },
+      {
+        "name": "device_type",
+        "data_type": "string"
+      },
+      {
+        "name": "discount_price_diff",
+        "data_type": "string"
+      },
+      {
+        "name": "dislike",
+        "data_type": "string"
+      },
+      {
+        "name": "download_finish_cnt",
+        "data_type": "string"
+      },
+      {
+        "name": "dropped",
+        "data_type": "string"
+      },
+      {
+        "name": "dsp_id",
+        "data_type": "string"
+      },
+      {
+        "name": "duration",
+        "data_type": "string"
+      },
+      {
+        "name": "ecpm",
+        "data_type": "string"
+      },
+      {
+        "name": "ecpm_thres",
+        "data_type": "string"
+      },
+      {
+        "name": "enable_pre_convert",
+        "data_type": "string"
+      },
+      {
+        "name": "end_time",
+        "data_type": "string"
+      },
+      {
+        "name": "event_pixel_id",
+        "data_type": "string"
+      },
+      {
+        "name": "event_type",
+        "data_type": "string"
+      },
+      {
+        "name": "ext_value",
+        "data_type": "string"
+      },
+      {
+        "name": "external_action",
+        "data_type": "string"
+      },
+      {
+        "name": "external_json",
+        "data_type": "string"
+      },
+      {
+        "name": "first_joiner_key",
+        "data_type": "string"
+      },
+      {
+        "name": "flow_control_mode",
+        "data_type": "string"
+      },
+      {
+        "name": "fraud_type",
+        "data_type": "string"
+      },
+      {
+        "name": "g_pos",
+        "data_type": "string"
+      },
+      {
+        "name": "gd_last_ecpm",
+        "data_type": "string"
+      },
+      {
+        "name": "gender",
+        "data_type": "string"
+      },
+      {
+        "name": "google_aid",
+        "data_type": "string"
+      },
+      {
+        "name": "gps_city_code",
+        "data_type": "string"
+      },
+      {
+        "name": "group_id",
+        "data_type": "string"
+      },
+      {
+        "name": "group_type",
+        "data_type": "string"
+      },
+      {
+        "name": "hidden_cost",
+        "data_type": "string"
+      },
+      {
+        "name": "idfa",
+        "data_type": "string"
+      },
+      {
+        "name": "image_mode",
+        "data_type": "string"
+      },
+      {
+        "name": "init_pcvr",
+        "data_type": "string"
+      },
+      {
+        "name": "install_id",
+        "data_type": "string"
+      },
+      {
+        "name": "invalid_event",
+        "data_type": "string"
+      },
+      {
+        "name": "ip_city_code",
+        "data_type": "string"
+      },
+      {
+        "name": "is_cbo",
+        "data_type": "string"
+      },
+      {
+        "name": "is_login",
+        "data_type": "string"
+      },
+      {
+        "name": "is_preview",
+        "data_type": "string"
+      },
+      {
+        "name": "is_send_idfa",
+        "data_type": "string"
+      },
+      {
+        "name": "is_valid",
+        "data_type": "string"
+      },
+      {
+        "name": "item_id",
+        "data_type": "string"
+      },
+      {
+        "name": "join_label",
+        "data_type": "string"
+      },
+      {
+        "name": "joiner_podname",
+        "data_type": "string"
+      },
+      {
+        "name": "keywords",
+        "data_type": "string"
+      },
+      {
+        "name": "label",
+        "data_type": "string"
+      },
+      {
+        "name": "lac",
+        "data_type": "string"
+      },
+      {
+        "name": "landing_type",
+        "data_type": "string"
+      },
+      {
+        "name": "language",
+        "data_type": "string"
+      },
+      {
+        "name": "last_ecpm",
+        "data_type": "string"
+      },
+      {
+        "name": "load_percent",
+        "data_type": "string"
+      },
+      {
+        "name": "log_extra",
+        "data_type": "string"
+      },
+      {
+        "name": "mac",
+        "data_type": "string"
+      },
+      {
+        "name": "merge_type",
+        "data_type": "string"
+      },
+      {
+        "name": "ml_label",
+        "data_type": "string"
+      },
+      {
+        "name": "mprice",
+        "data_type": "string"
+      },
+      {
+        "name": "native_type",
+        "data_type": "string"
+      },
+      {
+        "name": "open_udid",
+        "data_type": "string"
+      },
+      {
+        "name": "optecpm",
+        "data_type": "string"
+      },
+      {
+        "name": "ori_bid",
+        "data_type": "string"
+      },
+      {
+        "name": "ori_cpa_bid",
+        "data_type": "string"
+      },
+      {
+        "name": "ori_cpa_phrase",
+        "data_type": "string"
+      },
+      {
+        "name": "ori_ctr",
+        "data_type": "string"
+      },
+      {
+        "name": "orit",
+        "data_type": "string"
+      },
+      {
+        "name": "orit_inventory_billing_type",
+        "data_type": "string"
+      },
+      {
+        "name": "os_version",
+        "data_type": "string"
+      },
+      {
+        "name": "other2usd_exchange_rate",
+        "data_type": "string"
+      },
+      {
+        "name": "p_creative_id",
+        "data_type": "string"
+      },
+      {
+        "name": "package",
+        "data_type": "string"
+      },
+      {
+        "name": "page_url",
+        "data_type": "string"
+      },
+      {
+        "name": "params",
+        "data_type": "string"
+      },
+      {
+        "name": "pctr",
+        "data_type": "string"
+      },
+      {
+        "name": "pcvr",
+        "data_type": "string"
+      },
+      {
+        "name": "platform",
+        "data_type": "string"
+      },
+      {
+        "name": "play_order",
+        "data_type": "string"
+      },
+      {
+        "name": "pos_ctr",
+        "data_type": "string"
+      },
+      {
+        "name": "position_cvr_discount",
+        "data_type": "string"
+      },
+      {
+        "name": "position_discount",
+        "data_type": "string"
+      },
+      {
+        "name": "predict",
+        "data_type": "string"
+      },
+      {
+        "name": "price",
+        "data_type": "string"
+      },
+      {
+        "name": "price_diff",
+        "data_type": "string"
+      },
+      {
+        "name": "price_estimate_ratio",
+        "data_type": "string"
+      },
+      {
+        "name": "pricing",
+        "data_type": "string"
+      },
+      {
+        "name": "province_id",
+        "data_type": "string"
+      },
+      {
+        "name": "pt",
+        "data_type": "string"
+      },
+      {
+        "name": "rank_bid",
+        "data_type": "string"
+      },
+      {
+        "name": "rank_bid_origin_currency",
+        "data_type": "string"
+      },
+      {
+        "name": "recall_ctr",
+        "data_type": "string"
+      },
+      {
+        "name": "recall_cvr",
+        "data_type": "string"
+      },
+      {
+        "name": "recall_vpr",
+        "data_type": "string"
+      },
+      {
+        "name": "refer",
+        "data_type": "string"
+      },
+      {
+        "name": "req_id",
+        "data_type": "string"
+      },
+      {
+        "name": "rit",
+        "data_type": "string"
+      },
+      {
+        "name": "rit_inventory_billing_type",
+        "data_type": "string"
+      },
+      {
+        "name": "rt",
+        "data_type": "string"
+      },
+      {
+        "name": "second_joiner_key",
+        "data_type": "string"
+      },
+      {
+        "name": "send_cnt",
+        "data_type": "string"
+      },
+      {
+        "name": "send_count",
+        "data_type": "string"
+      },
+      {
+        "name": "send_time",
+        "data_type": "string"
+      },
+      {
+        "name": "shadow_ad_id",
+        "data_type": "string"
+      },
+      {
+        "name": "shadow_advertiser_id",
+        "data_type": "string"
+      },
+      {
+        "name": "shadow_campaign_id",
+        "data_type": "string"
+      },
+      {
+        "name": "shadow_creative_id",
+        "data_type": "string"
+      },
+      {
+        "name": "shadow_strategy_version",
+        "data_type": "string"
+      },
+      {
+        "name": "show_cnt",
+        "data_type": "string"
+      },
+      {
+        "name": "showsend",
+        "data_type": "string"
+      },
+      {
+        "name": "site_id",
+        "data_type": "string"
+      },
+      {
+        "name": "smart_bid_type",
+        "data_type": "string"
+      },
+      {
+        "name": "sorted_ecpm",
+        "data_type": "string"
+      },
+      {
+        "name": "springdb_hit",
+        "data_type": "string"
+      },
+      {
+        "name": "staytime",
+        "data_type": "string"
+      },
+      {
+        "name": "stream_count",
+        "data_type": "string"
+      },
+      {
+        "name": "tag",
+        "data_type": "string"
+      },
+      {
+        "name": "trace_id",
+        "data_type": "string"
+      },
+      {
+        "name": "tz_name",
+        "data_type": "string"
+      },
+      {
+        "name": "uid",
+        "data_type": "string"
+      },
+      {
+        "name": "union_uuid",
+        "data_type": "string"
+      },
+      {
+        "name": "unique_id",
+        "data_type": "string"
+      },
+      {
+        "name": "update_version_code",
+        "data_type": "string"
+      },
+      {
+        "name": "usd_price",
+        "data_type": "string"
+      },
+      {
+        "name": "user",
+        "data_type": "string"
+      },
+      {
+        "name": "user_agent",
+        "data_type": "string"
+      },
+      {
+        "name": "user_id",
+        "data_type": "string"
+      },
+      {
+        "name": "user_mode",
+        "data_type": "string"
+      },
+      {
+        "name": "ut",
+        "data_type": "string"
+      },
+      {
+        "name": "uuid",
+        "data_type": "string"
+      },
+      {
+        "name": "valid_ml_type",
+        "data_type": "string"
+      },
+      {
+        "name": "vid",
+        "data_type": "string"
+      },
+      {
+        "name": "video_play_type",
+        "data_type": "string"
+      },
+      {
+        "name": "date",
+        "data_type": "string",
+        "is_partition": true
+      },
+      {
+        "name": "hour",
+        "data_type": "string",
+        "is_partition": true
+      }
+    ]
+  },
+  "verification_sampling_output": {
+    "exists": true,
+    "owner": "ad_compliance",
+    "columns": [
+      {
+        "name": "guid",
+        "data_type": "string"
+      },
+      {
+        "name": "task_run_id",
+        "data_type": "bigint"
+      },
+      {
+        "name": "database",
+        "data_type": "string"
+      },
+      {
+        "name": "table_name",
+        "data_type": "string"
+      },
+      {
+        "name": "partition_value",
+        "data_type": "string"
+      },
+      {
+        "name": "storage_type",
+        "data_type": "string"
+      },
+      {
+        "name": "raw_sample_data",
+        "data_type": "string"
+      },
+      {
+        "name": "cluster",
+        "data_type": "string"
+      },
+      {
+        "name": "date",
+        "data_type": "string",
+        "is_partition": true
+      },
+      {
+        "name": "tenant",
+        "data_type": "string",
+        "is_partition": true
+      }
     ]
   }
 }

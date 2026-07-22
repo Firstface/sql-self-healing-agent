@@ -21,6 +21,13 @@ class MockUpstreamEventExecutor:
                 error_message=round_def.error_message,
                 log_path=round_def.log_path,
             )
+        must_not_contain = condition.get("must_not_contain")
+        if must_not_contain and must_not_contain.casefold() in sql.casefold():
+            return MockExecutionResult(
+                status="FAILED",
+                error_message=round_def.error_message,
+                log_path=round_def.log_path,
+            )
         if condition.get("success") is True:
             return MockExecutionResult(status="SUCCESS")
         return MockExecutionResult(

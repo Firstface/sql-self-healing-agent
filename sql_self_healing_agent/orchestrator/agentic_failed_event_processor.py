@@ -1,3 +1,4 @@
+import hashlib
 import json
 from dataclasses import dataclass
 from typing import Callable
@@ -102,6 +103,16 @@ class InternalToolOutput(BaseModel):
 class ContextSummaryInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     context: dict[str, object]
+
+
+def _redact_original_sql(payload: dict[str, object]) -> dict[str, object]:
+    original = payload.get("original_sql")
+    if not isinstance(original, str) or len(original) <= 200:
+        return payload
+    digest = hashlib.sha256(original.encode("utf-8")).hexdigest()[:12]
+    redacted = dict(payload)
+    redacted["original_sql"] = f"<original_sql len={len(original)} sha256={digest} head={original[:200]!r}>"
+    return redacted
 
 
 class InternalBusinessTool:
@@ -247,8 +258,10 @@ class AgenticActionExecutor:
         return ["diagnosis"]
 
     def _metadata(self, context):
-        extraction=self.table_extractor.extract(self.event.sql); tables=[]; missing=[]; errors=[]
+        extraction=self.table_extractor.extract(self.event.sql); tables=[]; missing=[]; errors=[]; seen=set()
         for ref in extraction.tables:
+            if ref.normalized_name in seen: continue
+            seen.add(ref.normalized_name)
             try:
                 item=self.deps.metadata_provider.get_table_metadata(ref.normalized_name)
                 missing.append(ref.normalized_name) if item is None else tables.append(item)
@@ -340,11 +353,12 @@ class AgenticFailedEventProcessor:
         def summarize(payload, limits):
             if self.llm_adapter is None:
                 raise RuntimeError("summary LLM unavailable")
+            summary_payload = _redact_original_sql(payload)
             return self.hook_manager.execute_compaction(
                 lambda feedback: self.llm_adapter.generate_structured(
                     structured_prompt(
                         "只总结现有事实，不得修改 current_plan_step、candidate_status、gate_constraints 或 artifact refs；严格返回 ContextSummary。",
-                        ContextSummaryInput(context=payload),
+                        ContextSummaryInput(context=summary_payload),
                         ContextSummary,
                     ),
                     ContextSummary,

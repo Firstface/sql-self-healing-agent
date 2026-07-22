@@ -66,6 +66,17 @@ class SQLGenerator:
                     cannot_generate_safely=True,
                     reason="LLM 未能返回合法的结构化 SQL 结果。",
                 )
+            if result.changed_fragments and not result.cannot_generate_safely:
+                candidate = _apply_changed_fragments(generator_input.failed_sql, result.changed_fragments)
+                if candidate is not None:
+                    if result.sql_candidate is not None and result.sql_candidate.strip() and result.sql_candidate != candidate:
+                        return SQLGenerationResult(
+                            generated=result.generated,
+                            sql_candidate=result.sql_candidate,
+                            cannot_generate_safely=result.cannot_generate_safely,
+                            reason=result.reason,
+                        )
+                    return SQLGenerationResult(generated=True, sql_candidate=candidate)
             return SQLGenerationResult(
                 generated=result.generated,
                 sql_candidate=result.sql_candidate,
@@ -83,6 +94,16 @@ class SQLGenerator:
                 reason="RepairPlan cannot be applied uniquely and safely",
             )
         return SQLGenerationResult(generated=True, sql_candidate=candidate)
+
+
+def _apply_changed_fragments(failed_sql: str, fragments: list[ChangedFragment]) -> str | None:
+    candidate = failed_sql
+    for fragment in fragments:
+        action = RepairAction(action_type=fragment.action_type, target_fragment=fragment.before, replacement_fragment=fragment.after, reason=fragment.reason, risk_level="LOW")
+        candidate, count = _replace_action(candidate, action)
+        if count != 1:
+            return None
+    return candidate
 
 
 def _replace_action(sql: str, action: RepairAction) -> tuple[str, int]:
